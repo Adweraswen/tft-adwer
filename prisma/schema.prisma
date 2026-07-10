@@ -1,0 +1,53 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A single capture event: a screenshot was analyzed by VLM and recommendations were computed.
+model Snapshot {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+
+  // Where the snapshot came from
+  source          String   @default("manual") // "live" (from capture client) or "manual" (browser upload)
+
+  // Raw game state extracted by VLM
+  level           Int      @default(1)
+  gold            Int      @default(0)
+  hp              Int      @default(100)
+  stage           Int      @default(1)
+  round           Int      @default(1)
+  streak          Int      @default(0) // positive = win streak, negative = loss streak
+
+  // JSON-encoded arrays/objects (SQLite has no native arrays)
+  shop            String   @default("[]") // JSON: string[] of 5 champion names (or "" for empty slot)
+  board           String   @default("[]") // JSON: {name, stars, items}[] of champions on board
+  bench           String   @default("[]") // JSON: {name, stars, items}[] of champions on bench
+  items           String   @default("[]") // JSON: {name, holder}[] of completed items on board
+  augments        String   @default("[]") // JSON: string[] of augment names
+  traits          String   @default("[]") // JSON: {name, count, breakpoint}[] of active traits
+
+  // VLM raw response (for debugging)
+  vlmRaw          String?
+
+  // Recommendations computed by the advisor engine (JSON)
+  recommendations String   @default("{}") // JSON: FullRecommendation object
+
+  // Whether the analysis succeeded
+  ok              Boolean  @default(true)
+  errorMsg        String?
+
+  @@index([createdAt])
+  @@index([source])
+}
+
+// Key-value settings (capture interval, VLM model name, etc.)
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

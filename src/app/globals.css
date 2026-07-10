@@ -1,0 +1,393 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ─── TFT Adwer custom theme ─────────────────────────────────────────────── */
+
+/* Ambient gradient background for the whole page */
+.tft-bg {
+  background-color: #09090b;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(245, 158, 11, 0.08), transparent),
+    radial-gradient(ellipse 60% 40% at 90% 10%, rgba(168, 85, 247, 0.05), transparent),
+    radial-gradient(ellipse 50% 40% at 10% 90%, rgba(16, 185, 129, 0.04), transparent);
+}
+
+/* Glassmorphism card surface */
+.tft-glass {
+  background: linear-gradient(135deg, rgba(39, 39, 42, 0.55) 0%, rgba(24, 24, 27, 0.65) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Animated gradient border (for premium cards) */
+.tft-glow-border {
+  position: relative;
+}
+.tft-glow-border::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.5), rgba(239, 68, 68, 0.3), rgba(168, 85, 247, 0.3));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.6;
+  transition: opacity 0.3s;
+}
+.tft-glow-border:hover::before {
+  opacity: 1;
+}
+
+/* Shimmer animation */
+@keyframes tft-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.tft-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  background-size: 200% 100%;
+  animation: tft-shimmer 2.5s infinite;
+}
+
+/* Fade-in-up entrance for cards */
+@keyframes tft-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tft-fade-up {
+  animation: tft-fade-up 0.4s ease-out backwards;
+}
+
+/* Pulsing glow ring for live indicator */
+@keyframes tft-pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.tft-pulse-ring {
+  animation: tft-pulse-ring 2s infinite;
+}
+
+/* Slow gradient drift for premium headers */
+@keyframes tft-gradient-drift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+.tft-gradient-drift {
+  background-size: 200% 200%;
+  animation: tft-gradient-drift 6s ease infinite;
+}
+
+/* Custom scrollbar (dark theme) */
+.tft-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.tft-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tft-scroll::-webkit-scrollbar-thumb {
+  background: rgba(82, 82, 91, 0.5);
+  border-radius: 3px;
+}
+.tft-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(113, 113, 122, 0.7);
+}
+
+/* Tabular numbers */
+.tft-tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Hide the default disclosure triangle on <details>/<summary> — we render our
+   own chevron icon. Covers WebKit (::-webkit-details-marker) and the standard
+   ::marker pseudo, plus list-style as a fallback for older engines. */
+summary {
+  list-style: none;
+}
+summary::-webkit-details-marker {
+  display: none !important;
+}
+summary::marker {
+  display: none;
+  content: "";
+}
+
+/* Threat-level meter glow */
+@keyframes tft-danger-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.tft-danger-pulse {
+  animation: tft-danger-pulse 1.5s ease-in-out infinite;
+}
+
+/* Scale-in for modals and popovers */
+@keyframes tft-scale-in {
+  from { opacity: 0; transform: scale(0.95) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.tft-scale-in {
+  animation: tft-scale-in 0.2s ease-out;
+}
+
+/* Slide-in from right (for detail panels) */
+@keyframes tft-slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.tft-slide-in-right {
+  animation: tft-slide-in-right 0.3s ease-out;
+}
+
+/* Subtle floating animation for hero icons */
+@keyframes tft-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.tft-float {
+  animation: tft-float 3s ease-in-out infinite;
+}
+
+/* Count-up number animation (subtle pop) */
+@keyframes tft-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+.tft-pop {
+  animation: tft-pop 0.3s ease-out;
+}
+
+/* Glow ring on hover for interactive cards */
+.tft-hover-glow {
+  transition: box-shadow 0.3s ease, transform 0.2s ease;
+}
+.tft-hover-glow:hover {
+  box-shadow: 0 0 24px -4px rgba(245, 158, 11, 0.15);
+}
+
+/* Refined focus ring for accessibility */
+.tft-focus-ring:focus-visible {
+  outline: 2px solid rgba(245, 158, 11, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Range slider styling (for calculator inputs) */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(63, 63, 70, 0.8);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+  cursor: pointer;
+  border: 2px solid #18181b;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+  cursor: pointer;
+  border: 2px solid #18181b;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+/* Select dropdown styling (dark theme) */
+select {
+  background-color: #18181b;
+  color: #e4e4e7;
+  border-color: #3f3f46;
+}
+select option {
+  background-color: #18181b;
+  color: #e4e4e7;
+}
+
+/* Subtle noise texture overlay for depth (very faint) */
+.tft-noise {
+  position: relative;
+}
+.tft-noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' /%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Animated underline for links */
+.tft-link {
+  position: relative;
+}
+.tft-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -2px;
+  width: 0;
+  height: 1px;
+  background: currentColor;
+  transition: width 0.3s ease;
+}
+.tft-link:hover::after {
+  width: 100%;
+}
+
+/* Stagger fade for list items */
+.tft-stagger > * {
+  animation: tft-fade-up 0.4s ease-out backwards;
+}
+.tft-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.tft-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.tft-stagger > *:nth-child(3) { animation-delay: 80ms; }
+.tft-stagger > *:nth-child(4) { animation-delay: 120ms; }
+.tft-stagger > *:nth-child(5) { animation-delay: 160ms; }
+.tft-stagger > *:nth-child(6) { animation-delay: 200ms; }
+.tft-stagger > *:nth-child(7) { animation-delay: 240ms; }
+.tft-stagger > *:nth-child(8) { animation-delay: 280ms; }
+
+/* Smooth tab content transition */
+[data-state="active"] {
+  animation: tft-fade-up 0.25s ease-out;
+}

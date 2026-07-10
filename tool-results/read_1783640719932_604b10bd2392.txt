@@ -1,0 +1,1236 @@
+     1→#!/usr/bin/env python3
+     2→"""
+     3→TFT Adwer — Capture Client
+     4→==========================
+     5→
+     6→Bu script PC'nizde çalışır, her N saniyede ekranın bir bölgesini (veya tamamını)
+     7→yakalar ve TFT Adwer web uygulamasına yollar. Web uygulaması VLM ile görüntüyü
+     8→analiz eder ve canlı önerileri tarayıcıda gösterir.
+     9→
+    10→KURULUM
+    11→-------
+    12→    pip install mss requests pillow
+    13→
+    14→    # Arka plan yakalama için (opsiyonel — alt-tab yapsan bile TFT'yi okur):
+    15→    pip install windows-capture
+    16→
+    17→ÖNEMLİ — MAÇ İÇİ pencere
+    18→------------------------
+    19→League of Legends'da TFT maç içi penceresi:
+    20→
+    21→  - Başlık  : "League of Legends (TM) Client"
+    22→  - Process : League of Legends.exe
+    23→  - Boyut   : tam ekran (örn. 1920x1080)
+    24→  - İçerik  : TFT tahtası, şampiyonlar, HP/gold/level göstergeleri
+    25→
+    26→VLM BUNU okumalı. (Dikkat: "League of Legends" başlıklı küçük 160x28 pencere
+    27→varsa o splash/tray penceresidir, atlanır.)
+    28→
+    29→--background modunda --window vermezseniz varsayılan olarak
+    30→"League of Legends (TM) Client" kullanılır.
+    31→
+    32→ÇALIŞTIRMA
+    33→---------
+    34→    # Tam ekran yakala, 4 saniyede bir yolla
+    35→    python capture.py --url https://your-sandbox-url/api/snapshot --interval 4
+    36→
+    37→    # Sadece TFT maç içi pencereyi yakala (önerilen — daha az bant genişliği)
+    38→    python capture.py --url https://... --interval 4 --window "League of Legends (TM) Client"
+    39→
+    40→    # Arka plan yakalama (alt-tab yapsan bile TFT'yi okur — windows-capture gerekli)
+    41→    # --window verilmezse varsayılan: "League of Legends (TM) Client"
+    42→    python capture.py --url https://... --interval 10 --background -v
+    43→
+    44→    # DEBUG: her frame'i diske kaydet (VLM yanlış ekran okuyorsa ne yakalandığını gör)
+    45→    python capture.py --url https://... --interval 10 --background --save-frames ./debug-frames -v
+    46→
+    47→    # Belirli bir bölgeyi yakala (x y w h, 1080p TFT için yaklaşık)
+    48→    python capture.py --url https://... --region 0 0 1920 1080
+    49→
+    50→GÜVENLİK
+    51→--------
+    52→- Sadece ekran yakalar ve HTTP POST yapar. Hiçbir oyun dosyasını okumaz/değiştirmez.
+    53→- Oyuna müdahale etmez (tıklama/kadı-klavye yok). Sadece okur.
+    54→- Anti-cheat tetiklemez — League of Legends Anti-Cheat ekran yakalamaya karışmaz.
+    55→- URL'i kendi web uygulamanızla değiştirin.
+    56→
+    57→NOTLAR
+    58→------
+    59→- mss çok hızlıdır (~5ms yakalama). Band genişliği: ~200KB/screenshot (JPEG kalite 80).
+    60→- VLM analizi web tarafında ~3 saniye sürer. interval=4 önerilir.
+    61→- --background (windows-capture) TFT'yi arka planda yakalar. Alt-tab yapıp
+    62→  tarayıcıya baksan bile TFT okumaya devam eder. DirectX oyunlarını destekler.
+    63→- Çıkmak için Ctrl+C.
+    64→"""
+    65→
+    66→from __future__ import annotations
+    67→
+    68→import argparse
+    69→import base64
+    70→import io
+    71→import signal
+    72→import sys
+    73→import time
+    74→from typing import Optional
+    75→
+    76→# `requests` is always needed for POSTing screenshots to the server.
+    77→try:
+    78→    import requests
+    79→except ImportError:
+    80→    print("Eksik bağımlılık: requests")
+    81→    print("Çalıştır: pip install requests")
+    82→    sys.exit(1)
+    83→
+    84→# `mss` and `PIL` are only needed for screen capture. We defer these imports
+    85→# to capture-mode startup so the script can show --help without them.
+    86→mss = None
+    87→Image = None
+    88→
+    89→# Optional: when --save-frames is set, every captured frame is saved to this
+    90→# directory as a JPEG. Set in main() from the CLI flag. Useful for debugging
+    91→# "VLM reads wrong screen" issues — you can inspect exactly what was captured.
+    92→SAVE_FRAMES_DIR: Optional[str] = None
+    93→
+    94→# Local reader (Live API + gold OCR) — main() içinde --use-local flag ile
+    95→# oluşturulur. None ise local data kullanılmaz, sadece VLM çalışır.
+    96→_LOCAL_READER = None
+    97→# Gold debug mode — --gold-debug flag. True ise gold OCR görüntüleri diske kaydedilir.
+    98→_GOLD_DEBUG = False
+    99→
+   100→
+   101→# ─── Window finding (Windows only) ──────────────────────────────────────────
+   102→
+   103→def find_window_region(title: str) -> Optional[tuple[int, int, int, int]]:
+   104→    """Find a window by title and return (left, top, width, height). Windows only."""
+   105→    try:
+   106→        import win32gui
+   107→    except ImportError:
+   108→        print("Uyarı: win32gui yok — pip install pywin32 (Windows'ta pencere bulma için)")
+   109→        return None
+   110→
+   111→    result = {}
+   112→
+   113→    def callback(hwnd, _):
+   114→        if win32gui.IsWindowVisible(hwnd):
+   115→            window_text = win32gui.GetWindowText(hwnd)
+   116→            if title.lower() in window_text.lower():
+   117→                rect = win32gui.GetWindowRect(hwnd)  # (left, top, right, bottom)
+   118→                result["rect"] = (rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1])
+   119→
+   120→    win32gui.EnumWindows(callback, None)
+   121→    return result.get("rect")
+   122→
+   123→
+   124→# ─── Background capture via Windows Graphics Capture API ─────────────────────
+   125→#
+   126→# windows-capture wraps the modern WGC API (Windows 10 1903+). Unlike mss (which
+   127→# grabs whatever is visible on screen), WGC captures a specific WINDOW — even
+   128→# when that window is behind other windows (alt-tabbed). This is exactly what we
+   129→# need: the user alt-tabs to Chrome to read advisor suggestions, but capture.py
+   130→# keeps reading the TFT window in the background.
+   131→#
+   132→# WGC is event-driven: it continuously produces frames. We run it on a daemon
+   133→# thread and keep only the LATEST frame in a buffer. The main capture loop calls
+   134→# grab_latest() on its own interval (no need to match WGC's frame rate).
+   135→#
+   136→# Requires: pip install windows-capture numpy
+   137→# Requires: Windows 10 1903+ (WGC API)
+   138→
+   139→class BackgroundCapturer:
+   140→    """Capture a specific window in the background using Windows Graphics Capture.
+   141→
+   142→    Starts a daemon thread that continuously captures frames. grab_latest()
+   143→    returns the most recent frame as a PIL Image (or None if no frame yet).
+   144→
+   145→    Only works on Windows 10 1903+ with `windows-capture` installed.
+   146→    """
+   147→
+   148→    def __init__(self, window_title: str, verbose: bool = False):
+   149→        self.window_title = window_title
+   150→        self.verbose = verbose
+   151→        self._latest_img = None  # PIL.Image (RGB)
+   152→        self._lock = __import__("threading").Lock()
+   153→        self._closed = False
+   154→        self._frame_count = 0
+   155→        self._capture = None
+   156→        self._thread = None
+   157→        # Error throttling — the WGC daemon thread fires 60+ fps. Without
+   158→        # throttling, a persistent error (API mismatch, lost surface) would
+   159→        # spam the console hundreds of times per second. We log the first
+   160→        # error immediately, then at most once per 10s, and reset on success.
+   161→        self._err_count = 0              # errors since last successful frame
+   162→        self._err_logged_at = 0.0        # monotonic time of last error log
+   163→        self._first_err_logged = False   # has the first error been logged?
+   164→        self._start()
+   165→
+   166→    def _start(self):
+   167→        try:
+   168→            from windows_capture import WindowsCapture, Frame, InternalCaptureControl
+   169→            import numpy as np
+   170→        except ImportError as e:
+   171→            raise RuntimeError(
+   172→                "windows-capture kütüphanesi yok. Arka plan yakalama için gerekli.\n"
+   173→                "Kur: pip install windows-capture numpy"
+   174→            ) from e
+   175→
+   176→        # WGC needs either a window_name or monitor_index. We use window_name.
+   177→        # The title match is EXACT in windows-capture (not substring), so we
+   178→        # first resolve the full window title via win32gui.
+   179→        full_title = self._resolve_full_title(self.window_title)
+   180→        if not full_title:
+   181→            raise RuntimeError(
+   182→                f"'{self.window_title}' penceresi bulunamadı (veya sadece terminal/tarayıcı "
+   183→                f"penceresi match oldu — bu güvenlik filtresi tarafından reddedildi).\n"
+   184→                f"  TFT açık ve oyun içi client'ta olduğundan emin ol.\n"
+   185→                f"  Doğru pencere adını bulmak için şunu çalıştır:\n"
+   186→                f"    python capture.py --list-windows\n"
+   187→                f"  Çıktıda ★ işaretli satır TFT'nin penceresidir. Başlığı kopyala ve "
+   188→                f"--window parametresine yapıştır."
+   189→            )
+   190→        if self.verbose:
+   191→            print(f"  [bg] pencere bulundu: '{full_title}'")
+   192→
+   193→        try:
+   194→            self._capture = WindowsCapture(
+   195→                cursor_capture=None,
+   196→                draw_border=None,
+   197→                monitor_index=None,
+   198→                window_name=full_title,
+   199→            )
+   200→        except Exception as e:
+   201→            raise RuntimeError(f"WindowsCapture başlatılamadı: {e}") from e
+   202→
+   203→        @self._capture.event
+   204→        def on_frame_arrived(frame: Frame, capture_control: InternalCaptureControl):
+   205→            try:
+   206→                # Extract an OWNED RGB uint8 (H,W,3) numpy array from the Frame.
+   207→                # windows-capture's Frame.frame_buffer is a zero-copy VIEW into
+   208→                # Rust-owned memory that is freed when this callback returns, so
+   209→                # _extract_rgb_array MUST return an owned copy (np.ascontiguousarray).
+   210→                rgb = self._extract_rgb_array(frame)
+   211→                img = Image.fromarray(rgb, "RGB")
+   212→                with self._lock:
+   213→                    self._latest_img = img
+   214→                    self._frame_count += 1
+   215→                    # Reset error throttle on success
+   216→                    self._err_count = 0
+   217→                    self._first_err_logged = False
+   218→            except Exception as e:
+   219→                with self._lock:
+   220→                    self._err_count += 1
+   221→                    err_total = self._err_count
+   222→                # Throttle logging: first error immediately, then once per 10s.
+   223→                # This prevents 60+/sec spam when the API mismatches.
+   224→                now = time.monotonic()
+   225→                should_log = False
+   226→                with self._lock:
+   227→                    if not self._first_err_logged:
+   228→                        should_log = True
+   229→                        self._first_err_logged = True
+   230→                        self._err_logged_at = now
+   231→                    elif now - self._err_logged_at >= 10.0:
+   232→                        should_log = True
+   233→                        self._err_logged_at = now
+   234→                if should_log and self.verbose:
+   235→                    if err_total == 1:
+   236→                        print(f"  [bg] frame dönüştürme hatası: {e}")
+   237→                    else:
+   238→                        print(f"  [bg] frame dönüştürme hatası: {e} ({err_total} frame etkilendi, sessize alındı)")
+   239→                    # Surface available Frame attrs so the user can report the
+   240→                    # exact API if our extraction guess missed.
+   241→                    if "not subscriptable" in str(e) or "attribute" in str(e).lower():
+   242→                        attrs = self._frame_attrs(frame)
+   243→                        print(f"  [bg] → windows-capture Frame özellikleri: {attrs}")
+   244→                        print(f"  [bg] → capture.py çalışmaya devam ediyor; TFT oyuna girince frame'ler düzelecek mi göreceğiz.")
+   245→
+   246→        @self._capture.event
+   247→        def on_closed():
+   248→            self._closed = True
+   249→            if self.verbose:
+   250→                print("  [bg] capture oturumu kapandı (pencere kapatılmış olabilir)")
+   251→
+   252→        import threading
+   253→        self._thread = threading.Thread(target=self._capture.start, daemon=True)
+   254→        self._thread.start()
+   255→
+   256→    @staticmethod
+   257→    def _get_process_name(hwnd: int) -> str:
+   258→        """Return the executable name (lowercased, e.g. 'python.exe') for the
+   259→        process that owns `hwnd`, or '' if it can't be determined.
+   260→
+   261→        Strategy (try multiple methods — some fail on certain Windows configs):
+   262→          1. ctypes + psapi GetModuleBaseNameW with PROCESS_QUERY_LIMITED_INFORMATION
+   263→          2. pywin32 win32process + win32api.GetModuleFileNameEx (fallback)
+   264→          3. QueryFullProcessImageName (most permissive, Win Vista+)
+   265→
+   266→        Returns "" only if all methods fail. Note: on some systems (e.g. user
+   267→        running without admin), the process name can't be read for elevated
+   268→        processes — in that case we return "" and the caller falls back to
+   269→        title+size based matching.
+   270→        """
+   271→        # First, get the PID
+   272→        pid = 0
+   273→        try:
+   274→            import win32process
+   275→            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+   276→        except Exception:
+   277→            try:
+   278→                import ctypes
+   279→                from ctypes import wintypes
+   280→                user32 = ctypes.WinDLL("user32", use_last_error=True)
+   281→                pid_val = wintypes.DWORD()
+   282→                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_val))
+   283→                pid = pid_val.value
+   284→            except Exception:
+   285→                pid = 0
+   286→        if not pid:
+   287→            return ""
+   288→
+   289→        # Method 1: ctypes + psapi
+   290→        try:
+   291→            import ctypes
+   292→            from ctypes import wintypes
+   293→            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+   294→            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+   295→            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+   296→            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+   297→            if handle:
+   298→                try:
+   299→                    buf = ctypes.create_unicode_buffer(1024)
+   300→                    if psapi.GetModuleBaseNameW(handle, None, buf, 1024):
+   301→                        return buf.value.lower()
+   302→                finally:
+   303→                    kernel32.CloseHandle(handle)
+   304→        except Exception:
+   305→            pass
+   306→
+   307→        # Method 2: pywin32
+   308→        try:
+   309→            import win32api
+   310→            import win32process
+   311→            import win32con
+   312→            handle = win32api.OpenProcess(win32con.PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+   313→            if handle:
+   314→                try:
+   315→                    try:
+   316→                        # GetModuleFileNameEx sometimes works where GetModuleBaseName fails
+   317→                        name = win32process.GetModuleFileNameEx(handle, 0)
+   318→                        if name:
+   319→                            import os
+   320→                            return os.path.basename(name).lower()
+   321→                    except Exception:
+   322→                        pass
+   323→                finally:
+   324→                    win32api.CloseHandle(handle)
+   325→        except Exception:
+   326→            pass
+   327→
+   328→        # Method 3: QueryFullProcessImageNameW (Vista+) — most permissive
+   329→        try:
+   330→            import ctypes
+   331→            from ctypes import wintypes
+   332→            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+   333→            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+   334→            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+   335→            if handle:
+   336→                try:
+   337→                    buf = ctypes.create_unicode_buffer(1024)
+   338→                    size = wintypes.DWORD(1024)
+   339→                    # QueryFullProcessImageNameW(handle, flags=0, buffer, &size)
+   340→                    if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+   341→                        import os
+   342→                        return os.path.basename(buf.value).lower()
+   343→                finally:
+   344→                    kernel32.CloseHandle(handle)
+   345→        except Exception:
+   346→            pass
+   347→
+   348→        return ""
+   349→
+   350→    # Process names that should NEVER be matched as the TFT game window — even
+   351→    # if their window title happens to contain the search string. The classic
+   352→    # trap: when the user runs `python capture.py --window "League of Legends
+   353→    # (TM) Client"`, the terminal window title contains that exact string as a
+   354→    # command-line argument, so a naive substring match would match the
+   355→    # TERMINAL instead of the game. This exclude list prevents that.
+   356→    _EXCLUDE_PROCESSES = {
+   357→        "python.exe", "pythonw.exe", "py.exe",
+   358→        "windowsterminal.exe", "powershell.exe", "cmd.exe",
+   359→        "conhost.exe", "alacritty.exe", "wezterm.exe",
+   360→        "code.exe", "cursor.exe", "sublime_text.exe",
+   361→        "chrome.exe", "firefox.exe", "msedge.exe", "brave.exe",
+   362→        "explorer.exe", "discord.exe", "steam.exe",
+   363→    }
+   364→
+   365→    # MAÇ İÇİ oyun penceresi — VLM BUNU okumalı. TFT tahtası, HP/gold/level
+   366→    # göstergeleri burada görünür. Pencere başlığı "League of Legends (TM) Client"
+   367→    # (1920x1080 gibi tam ekran boyutunda).
+   368→    _GAME_PROCESSES = {
+   369→        "league of legends.exe",       # in-game TFT window — MAÇ İÇİ
+   370→    }
+   371→
+   372→    # LOBBY/launcher pencereleri. Bunlar genelde küçük pencere boyutludur
+   373→    # (splash, tray, arkadaş listesi). Maç içi pencere bulunamazsa fallback
+   374→    # olarak kullanılabilirler.
+   375→    _LOBBY_PROCESSES = {
+   376→        "leagueclient.exe",            # League lobby/launcher
+   377→        "leagueclientux.exe",          # League UI process
+   378→    }
+   379→
+   380→    # Minimum pencere boyutu. 160x28 gibi küçük pencereler splash/tray'dir,
+   381→    # gerçek oyun penceresi en az 800x600 olmalı. Bu eşik altındaki pencereler
+   382→    # game/lobby process olsa bile atlanır.
+   383→    _MIN_GAME_WIDTH = 800
+   384→    _MIN_GAME_HEIGHT = 500
+   385→
+   386→    @staticmethod
+   387→    def _get_window_size(hwnd: int) -> tuple[int, int]:
+   388→        """Return (width, height) of a window, or (0, 0) on failure."""
+   389→        try:
+   390→            import win32gui
+   391→            rect = win32gui.GetWindowRect(hwnd)  # (left, top, right, bottom)
+   392→            return (rect[2] - rect[0], rect[3] - rect[1])
+   393→        except Exception:
+   394→            return (0, 0)
+   395→
+   396→    @staticmethod
+   397→    def _resolve_full_title(substring: str) -> Optional[str]:
+   398→        """Find the TFT MAÇ İÇİ window by title, process name, and size.
+   399→
+   400→        TFT'de maç içi pencere:
+   401→          - Başlık  : "League of Legends (TM) Client"
+   402→          - Process : League of Legends.exe
+   403→          - Boyut   : tam ekran (örn. 1920x1080)
+   404→
+   405→        Küçük "League of Legends" (160x28) penceresi splash/tray'dir, atlanır.
+   406→
+   407→        Strategy (tiered — en güvenilirten en az güvenilire):
+   408→          1. Tier 1: game process (League of Legends.exe) + boyut yeterli
+   409→          2. Tier 2: lobby process (LeagueClient.exe) + boyut yeterli (fallback)
+   410→          3. Tier 3: process alınamadıysa ("") → sadece boyuta güven
+   411→                     (büyük pencere = oyun penceresi)
+   412→          4. Tier 4: process alınamadıysa ve boyut da yetersizse, yine de
+   413→                     ilk match'i döndür (son çare)
+   414→          5. Hiçbiri yoksa None döner (caller hata basar).
+   415→
+   416→        NOT: Bazı Windows konfigürasyonlarında (özellikle kullanıcının kendi
+   417→        hesabından çalıştırılan elevated olmayan process'ler için) process adı
+   418→        alınamayabiliyor. Bu durumda boyut filtresi devreye girer.
+   419→        """
+   420→        try:
+   421→            import win32gui
+   422→        except ImportError:
+   423→            # No pywin32 — return the substring as-is (WGC will try exact match)
+   424→            return substring
+   425→
+   426→        # (title, process_name, hwnd, width, height)
+   427→        matches: list[tuple[str, str, int, int, int]] = []
+   428→
+   429→        def callback(hwnd, _):
+   430→            if not win32gui.IsWindowVisible(hwnd):
+   431→                return
+   432→            t = win32gui.GetWindowText(hwnd)
+   433→            if not t or substring.lower() not in t.lower():
+   434→                return
+   435→            exe = BackgroundCapturer._get_process_name(hwnd)
+   436→            w, h = BackgroundCapturer._get_window_size(hwnd)
+   437→            matches.append((t, exe, hwnd, w, h))
+   438→
+   439→        win32gui.EnumWindows(callback, None)
+   440→
+   441→        if not matches:
+   442→            return None
+   443→
+   444→        min_w = BackgroundCapturer._MIN_GAME_WIDTH
+   445→        min_h = BackgroundCapturer._MIN_GAME_HEIGHT
+   446→
+   447→        # Tier 1: MAÇ İÇİ process + boyut yeterli
+   448→        for title, exe, hwnd, w, h in matches:
+   449→            if exe in BackgroundCapturer._GAME_PROCESSES and w >= min_w and h >= min_h:
+   450→                return title
+   451→
+   452→        # Tier 2: LOBBY process + boyut yeterli (maç içi yoksa, fallback)
+   453→        for title, exe, hwnd, w, h in matches:
+   454→            if exe in BackgroundCapturer._LOBBY_PROCESSES and w >= min_w and h >= min_h:
+   455→                return title
+   456→
+   457→        # Tier 3: process alınamadı ("") → boyuta güven.
+   458→        # Kullanıcının PC'sinde process adı boş geliyorsa (permission sorunu),
+   459→        # en büyük pencereyi al. Terminal/editor/browser pencereleri zaten
+   460→        # title substring ile elenmediyse bile burada büyük olanı seçeriz.
+   461→        no_proc_big = [(t, w, h) for t, exe, hwnd, w, h in matches
+   462→                       if not exe and w >= min_w and h >= min_h]
+   463→        if no_proc_big:
+   464→            # En büyük alanlı olanı seç
+   465→            no_proc_big.sort(key=lambda x: x[1] * x[2], reverse=True)
+   466→            return no_proc_big[0][0]
+   467→
+   468→        # Tier 4: process var ama excluded değilse + boyut yeterli
+   469→        for title, exe, hwnd, w, h in matches:
+   470→            if exe and exe not in BackgroundCapturer._EXCLUDE_PROCESSES and w >= min_w and h >= min_h:
+   471→                return title
+   472→
+   473→        # Tier 5: son çare — boyut yeterli olan ilk match (process bilinmese bile)
+   474→        for title, exe, hwnd, w, h in matches:
+   475→            if w >= min_w and h >= min_h:
+   476→                return title
+   477→
+   478→        # Tier 6: hiçbiri yeterli değil — None döner, caller net hata basar
+   479→        return None
+   480→
+   481→    @staticmethod
+   482→    def _extract_rgb_array(frame):
+   483→        """Extract an OWNED RGB uint8 numpy array (H, W, 3) from a windows-capture Frame.
+   484→
+   485→        Verified API (windows-capture 1.1.9 through 2.0.0):
+   486→          - Graphics-Capture `Frame.frame_buffer` is a numpy ndarray, dtype uint8,
+   487→            shape (H, W, 4), channel order BGRA. It is a ZERO-COPY view into
+   488→            Rust-owned memory that is freed when `on_frame_arrived` returns.
+   489→          - `Frame.convert_to_bgr()` returns a *Frame* (NOT an ndarray) whose
+   490→            `frame_buffer` is a (H, W, 3) BGR view. Using it was our bug.
+   491→
+   492→        We read `frame.frame_buffer` directly, slice BGRA->RGB ([2,1,0], drop
+   493→        alpha), and return `np.ascontiguousarray(...)` so the caller gets an
+   494→        OWNED copy that survives the callback. Fallbacks cover the v2.0.0
+   495→        DxgiDuplicationFrame (`.to_numpy()`) and any custom Frame variant.
+   496→        """
+   497→        import numpy as np
+   498→
+   499→        # Primary path: Graphics-Capture Frame.frame_buffer (BGRA uint8 HxWx4)
+   500→        buf = getattr(frame, "frame_buffer", None)
+   501→        if isinstance(buf, np.ndarray) and buf.ndim == 3:
+   502→            if buf.shape[2] == 4:  # BGRA -> RGB
+   503→                return np.ascontiguousarray(buf[:, :, 2::-1])
+   504→            if buf.shape[2] == 3:  # BGR -> RGB
+   505→                return np.ascontiguousarray(buf[:, :, ::-1])
+   506→
+   507→        # Fallback 1: DxgiDuplicationFrame (v2.0.0) exposes to_numpy()
+   508→        to_numpy = getattr(frame, "to_numpy", None)
+   509→        if callable(to_numpy):
+   510→            try:
+   511→                arr = to_numpy()
+   512→                if isinstance(arr, np.ndarray) and arr.ndim == 3:
+   513→                    if arr.shape[2] == 4:
+   514→                        return np.ascontiguousarray(arr[:, :, 2::-1])
+   515→                    if arr.shape[2] == 3:
+   516→                        return np.ascontiguousarray(arr[:, :, ::-1])
+   517→            except Exception:
+   518→                pass
+   519→
+   520→        # Fallback 2: probe common attribute names (defensive — covers unknown forks)
+   521→        for attr in (
+   522→            "numpy", "raw_data", "data", "ndarray", "pixels",
+   523→            "buffer", "array", "raw", "image",
+   524→        ):
+   525→            val = getattr(frame, attr, None)
+   526→            if isinstance(val, np.ndarray) and val.ndim == 3:
+   527→                if val.shape[2] == 4:
+   528→                    return np.ascontiguousarray(val[:, :, 2::-1])
+   529→                if val.shape[2] == 3:
+   530→                    return np.ascontiguousarray(val[:, :, ::-1])
+   531→
+   532→        # Last resort — surface the available attrs so the user can report back
+   533→        attrs = [a for a in dir(frame) if not a.startswith("_")]
+   534→        raise RuntimeError(
+   535→            f"Frame'den numpy array çıkarılamadı. Frame özellikleri: {attrs}"
+   536→        )
+   537→
+   538→    @staticmethod
+   539→    def _frame_attrs(frame) -> list:
+   540→        """Return the public attribute names of a Frame (for diagnostics)."""
+   541→        try:
+   542→            return [a for a in dir(frame) if not a.startswith("_")]
+   543→        except Exception:
+   544→            return []
+   545→
+   546→    def grab_latest(self):
+   547→        """Return the latest captured frame as a PIL Image (RGB), or None."""
+   548→        with self._lock:
+   549→            if self._latest_img is None:
+   550→                return None
+   551→            # Return a copy so the caller can crop/encode without racing the writer
+   552→            return self._latest_img.copy()
+   553→
+   554→    @property
+   555→    def frame_count(self) -> int:
+   556→        with self._lock:
+   557→            return self._frame_count
+   558→
+   559→    @property
+   560→    def is_closed(self) -> bool:
+   561→        return self._closed
+   562→
+   563→
+   564→def is_tft_foreground(tft_title: str = "League of Legends (TM) Client") -> tuple[bool, str]:
+   565→    """
+   566→    Check if TFT MAÇ İÇİ is currently the foreground window.
+   567→
+   568→    Returns (is_foreground, foreground_window_title).
+   569→    On non-Windows or if pywin32 is missing, returns (True, "unknown") so capture
+   570→    proceeds (the user can still use the script without this guard).
+   571→
+   572→    NOT: TFT'de maç içi pencere başlığı "League of Legends (TM) Client"
+   573→    (League of Legends.exe, 1920x1080 gibi tam ekran). Bu varsayılan.
+   574→    """
+   575→    try:
+   576→        import win32gui
+   577→    except ImportError:
+   578→        return True, "unknown (no pywin32)"
+   579→
+   580→    try:
+   581→        hwnd = win32gui.GetForegroundWindow()
+   582→        title = win32gui.GetWindowText(hwnd) if hwnd else ""
+   583→        # TFT maç içi pencere başlığı: "League of Legends (TM) Client"
+   584→        # (League of Legends.exe process). "League of Legends" substring'i
+   585→        # yeterli — splash küçük pencere foreground olmaz zaten.
+   586→        is_tft = bool(hwnd) and "league of legends" in title.lower()
+   587→        return is_tft, title
+   588→    except Exception as e:
+   589→        return True, f"error: {e}"
+   590→
+   591→
+   592→# ─── Capture + send loop ────────────────────────────────────────────────────
+   593→
+   594→# ─── Board/bench crop regions (percentage of captured image) ────────────────
+   595→# These are RELATIVE to the captured image dimensions so they work at any
+   596→# resolution (1920x1080, 2560x1440, 1600x900 windowed, etc.). TFT's UI layout
+   597→# is always 16:9 and the board/bench positions are proportionally fixed.
+   598→#
+   599→# Layout (1920x1080 reference):
+   600→#   - Top-center (~2-5% H)         : stage-round "3-2"
+   601→#   - Top-right                    : leaderboard (OTHER players' HP — NOT yours)
+   602→#   - Center (~12-67% H, 25-75% W) : YOUR hex board (4 rows x 7 cols of hexagons)
+   603→#   - Below board (~67-78% H)      : YOUR bench (1 row of 9 slots)
+   604→#   - Bottom bar (~80-95% H)       : shop (5 cards), gold, level, XP, your HP
+   605→#   - Right edge (~80-100% W)      : trait/synergy panel (NOT champions!)
+   606→#
+   607→# The crop gives the VLM a ZOOMED-IN view of just the board / bench so it
+   608→# can't confuse them with the trait panel on the right edge. The full
+   609→# screenshot is still sent too (for stats: stage/gold/hp/level).
+   610→BOARD_CROP = (0.25, 0.12, 0.75, 0.67)   # (left, top, right, bottom) as fractions
+   611→BENCH_CROP = (0.25, 0.67, 0.75, 0.78)
+   612→
+   613→
+   614→def crop_to_data_url(img, box_frac: tuple[float, float, float, float], quality: int) -> str:
+   615→    """Crop `img` using fractional box (left, top, right, bottom) and return JPEG base64 data URL."""
+   616→    W, H = img.size
+   617→    box = (
+   618→        max(0, int(W * box_frac[0])),
+   619→        max(0, int(H * box_frac[1])),
+   620→        min(W, int(W * box_frac[2])),
+   621→        min(H, int(H * box_frac[3])),
+   622→    )
+   623→    # Guard against degenerate boxes
+   624→    if box[2] <= box[0] or box[3] <= box[1]:
+   625→        return ""
+   626→    cropped = img.crop(box)
+   627→    # Upscale 2x so small champion portraits / star indicators are easier for the VLM to read.
+   628→    # NEAREST keeps pixel edges sharp (no smoothing artifacts on text/icons).
+   629→    cropped = cropped.resize((cropped.width * 2, cropped.height * 2), Image.NEAREST)
+   630→    buf = io.BytesIO()
+   631→    cropped.save(buf, format="JPEG", quality=quality)
+   632→    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+   633→    return f"data:image/jpeg;base64,{b64}"
+   634→
+   635→
+   636→def capture_and_send(
+   637→    sct: mss.mss,
+   638→    requests_session: requests.Session,
+   639→    url: str,
+   640→    region: dict,
+   641→    monitor_index: int,
+   642→    quality: int,
+   643→    verbose: bool,
+   644→    no_crops: bool = False,
+   645→) -> tuple[bool, str]:
+   646→    """Capture one frame (mss foreground) and POST it. Returns (ok, message).
+   647→
+   648→    Sends the full screenshot PLUS cropped board and bench regions so the VLM
+   649→    can read champions from a zoomed-in view (avoiding confusion with the
+   650→    trait panel). Pass no_crops=True to disable (legacy/fallback behavior).
+   651→    """
+   652→    t0 = time.monotonic()
+   653→
+   654→    # Grab via mss (foreground only — captures whatever is visible on screen)
+   655→    try:
+   656→        shot = sct.grab(region)
+   657→    except Exception as e:
+   658→        return False, f"yakalama hatası: {e}"
+   659→
+   660→    # Convert BGRA -> RGB PIL Image
+   661→    try:
+   662→        img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+   663→    except Exception as e:
+   664→        return False, f"görüntü dönüşüm hatası: {e}"
+   665→
+   666→    return send_image(img, requests_session, url, quality, verbose, no_crops, t0)
+   667→
+   668→
+   669→def send_image(
+   670→    img,
+   671→    requests_session: requests.Session,
+   672→    url: str,
+   673→    quality: int,
+   674→    verbose: bool,
+   675→    no_crops: bool = False,
+   676→    t0: Optional[float] = None,
+   677→) -> tuple[bool, str]:
+   678→    """Encode a PIL Image (RGB) to JPEG + crops, POST to server. Returns (ok, message).
+   679→
+   680→    This is the shared send path used by both:
+   681→      - capture_and_send()  → foreground mss capture
+   682→      - main loop           → background WGC capture (BackgroundCapturer.grab_latest())
+   683→
+   684→    Sends the full screenshot PLUS cropped board and bench regions so the VLM
+   685→    can read champions from a zoomed-in view. Pass no_crops=True to disable.
+   686→    """
+   687→    if t0 is None:
+   688→        t0 = time.monotonic()
+   689→
+   690→    # Debug: save the raw captured frame to disk before encoding/sending.
+   691→    # Lets the user inspect exactly what WGC/mss captured — critical for
+   692→    # diagnosing "VLM reads wrong screen" issues.
+   693→    if SAVE_FRAMES_DIR:
+   694→        try:
+   695→            import os
+   696→            os.makedirs(SAVE_FRAMES_DIR, exist_ok=True)
+   697→            ts = int(time.time() * 1000) % 1_000_000_000
+   698→            path = os.path.join(SAVE_FRAMES_DIR, f"frame_{ts}.jpg")
+   699→            img.save(path, format="JPEG", quality=quality)
+   700→            if verbose:
+   701→                print(f"  [debug] frame kaydedildi: {path}")
+   702→        except Exception as e:
+   703→            if verbose:
+   704→                print(f"  [debug] frame kaydetme hatası: {e}")
+   705→
+   706→    # Encode full screenshot to JPEG
+   707→    try:
+   708→        buf = io.BytesIO()
+   709→        img.save(buf, format="JPEG", quality=quality)
+   710→        jpeg_bytes = buf.getvalue()
+   711→    except Exception as e:
+   712→        return False, f"JPEG dönüşüm hatası: {e}"
+   713→
+   714→    # Base64 data URL — full screenshot (for stats: stage/gold/hp/level)
+   715→    b64 = base64.b64encode(jpeg_bytes).decode("ascii")
+   716→    data_url = f"data:image/jpeg;base64,{b64}"
+   717→
+   718→    # Crop board + bench regions (zoomed-in views for champion reading)
+   719→    board_url = ""
+   720→    bench_url = ""
+   721→    if not no_crops:
+   722→        try:
+   723→            board_url = crop_to_data_url(img, BOARD_CROP, quality)
+   724→            bench_url = crop_to_data_url(img, BENCH_CROP, quality)
+   725→        except Exception as e:
+   726→            # Crop failure is non-fatal — server can still analyze the full screenshot
+   727→            if verbose:
+   728→                print(f"  ⚠ crop hatası (devam ediliyor): {e}")
+   729→
+   730→    # POST
+   731→    try:
+   732→        payload = {"image": data_url, "source": "live"}
+   733→        if board_url:
+   734→            payload["boardCrop"] = board_url
+   735→        if bench_url:
+   736→            payload["benchCrop"] = bench_url
+   737→
+   738→        # Local data (Live API + gold OCR) — capture.py başında _LOCAL_READER
+   739→        # oluşturulduysa ekle. Bu veri VLM'i bypass eder: level Live API'den
+   740→        # (%100 doğru), gold OCR'den (Tesseract). HP TFT'de Live API'de yok,
+   741→        # VLM'den gelecek.
+   742→        if _LOCAL_READER is not None:
+   743→            try:
+   744→                local = _LOCAL_READER.read(img, debug=_GOLD_DEBUG)
+   745→                payload["localData"] = local
+   746→                if verbose:
+   747→                    print(f"  [local] connected={local['connected']} "
+   748→                          f"level={local['level']} gold={local['gold']} "
+   749→                          f"hp={local['hp']}")
+   750→            except Exception as e:
+   751→                if verbose:
+   752→                    print(f"  [local] hata: {e}")
+   753→
+   754→        resp = requests_session.post(
+   755→            url,
+   756→            json=payload,
+   757→            timeout=30,
+   758→        )
+   759→        elapsed = time.monotonic() - t0
+   760→        if resp.status_code != 200:
+   761→            # Detect rate-limit responses (server 429 from VLM upstream, or
+   762→            # server "busy" 429 from the in-flight guard). For rate-limit we
+   763→            # pause longer; for "busy" we just continue normally.
+   764→            try:
+   765→                body = resp.json()
+   766→            except Exception:
+   767→                body = {}
+   768→            err_text = str(body.get("error", "")) + " " + str(body.get("message", ""))
+   769→            is_rate_limit = (
+   770→                "429" in err_text
+   771→                or "too many" in err_text.lower()
+   772→                or "rate" in err_text.lower()
+   773→                or "try again later" in err_text.lower()
+   774→            )
+   775→            is_busy = body.get("error") == "busy"
+   776→            if is_rate_limit:
+   777→                # Pause for 60s to let the VLM quota reset
+   778→                return False, f"rate-limited (HTTP {resp.status_code}). Pausing 60s. body={resp.text[:120]}"
+   779→            if is_busy:
+   780→                # Server already has a VLM call in flight — just skip, next interval will retry
+   781→                return False, "busy (VLM in flight). Skipped."
+   782→            return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+   783→        data = resp.json()
+   784→        ok = data.get("ok", False)
+   785→        oneliner = ""
+   786→        rec = data.get("recommendation") or {}
+   787→        oneliner = rec.get("oneLiner", "")
+   788→        state = data.get("state") or {}
+   789→        summary = (
+   790→            f"hp={state.get('hp')} gold={state.get('gold')} "
+   791→            f"lvl={state.get('level')} stage={state.get('stage')}-{state.get('round')}"
+   792→        )
+   793→        if verbose:
+   794→            print(f"  [{elapsed:.1f}s] {summary}")
+   795→            if oneliner:
+   796→                print(f"  → {oneliner}")
+   797→        if not ok and data.get("error"):
+   798→            return False, f"sunucu hatası: {data['error']}"
+   799→        return True, summary
+   800→    except requests.RequestException as e:
+   801→        return False, f"ağ hatası: {e}"
+   802→
+   803→
+   804→def list_windows() -> int:
+   805→    """Print all visible windows (title + process name + size) and return 0.
+   806→
+   807→    Helps the user discover the exact window title to pass to --window.
+   808→    Especially useful for TFT, whose in-game window title is
+   809→    "League of Legends (TM) Client" (League of Legends.exe process,
+   810→    full-screen size like 1920x1080).
+   811→
+   812→    The marker column shows:
+   813→      ★ MAÇ     = game process (League of Legends.exe) + size >= 800x500
+   814→      ⚠ BEKLE  = process alınamadı ama boyut büyük (muhtemelen oyun penceresi)
+   815→      (boş)    = küçük pencere (splash/tray) veya excluded process
+   816→    """
+   817→    print("=" * 70)
+   818→    print("Görünür pencereler (başlık + process adı + boyut)")
+   819→    print("=" * 70)
+   820→    try:
+   821→        import win32gui
+   822→    except ImportError:
+   823→        print("win32gui yok — pip install pywin32")
+   824→        return 1
+   825→
+   826→    windows: list[tuple[str, str, tuple[int, int, int, int]]] = []
+   827→
+   828→    def callback(hwnd, _):
+   829→        if not win32gui.IsWindowVisible(hwnd):
+   830→            return
+   831→        t = win32gui.GetWindowText(hwnd)
+   832→        if not t:
+   833→            return
+   834→        exe = BackgroundCapturer._get_process_name(hwnd)
+   835→        try:
+   836→            rect = win32gui.GetWindowRect(hwnd)  # (l, t, r, b)
+   837→            w, h = rect[2] - rect[0], rect[3] - rect[1]
+   838→            size = (rect[0], rect[1], w, h)
+   839→        except Exception:
+   840→            size = (0, 0, 0, 0)
+   841→        windows.append((t, exe, size))
+   842→
+   843→    win32gui.EnumWindows(callback, None)
+   844→
+   845→    if not windows:
+   846→        print("  (hiç görünür pencere yok)")
+   847→        return 0
+   848→
+   849→    game_procs = BackgroundCapturer._GAME_PROCESSES    # MAÇ İÇİ
+   850→    exclude_procs = BackgroundCapturer._EXCLUDE_PROCESSES
+   851→    min_w = BackgroundCapturer._MIN_GAME_WIDTH
+   852→    min_h = BackgroundCapturer._MIN_GAME_HEIGHT
+   853→
+   854→    def marker_for(exe: str, w: int, h: int) -> str:
+   855→        if exe in game_procs and w >= min_w and h >= min_h:
+   856→            return "★ MAÇ"
+   857→        # Process alınamadıysa ama başlık "League of Legends" içeriyor ve
+   858→        # boyut büyükse muhtemelen oyun penceresidir.
+   859→        if not exe and w >= min_w and h >= min_h:
+   860→            return "⚠ BEKLE"
+   861→        return ""
+   862→
+   863→    def sort_key(item):
+   864→        title, exe, size = item
+   865→        w, h = size[2], size[3]
+   866→        m = marker_for(exe, w, h)
+   867→        # ★ MAÇ ilk, ⚠ BEKLE ikinci, diğerleri son
+   868→        if m == "★ MAÇ":
+   869→            return (0, -w * h, title)
+   870→        if m == "⚠ BEKLE":
+   871→            return (1, -w * h, title)
+   872→        if exe and exe not in exclude_procs:
+   873→            return (2, -w * h, title)
+   874→        return (3, -w * h, title)
+   875→
+   876→    windows.sort(key=sort_key)
+   877→
+   878→    print(f"\n{'PROCESS':<26} {'BOYUT':<14} {'İŞARET':<10} BAŞLIK")
+   879→    print("-" * 70)
+   880→    for title, exe, size in windows:
+   881→        size_str = f"{size[2]}x{size[3]}" if size[2] > 0 else "?"
+   882→        # Truncate title to keep columns aligned
+   883→        t_display = title[:55] + ("…" if len(title) > 55 else "")
+   884→        exe_display = exe if exe else "(bilinmiyor)"
+   885→        marker = marker_for(exe, size[2], size[3])
+   886→        print(f"  {exe_display:<24} {size_str:<14} {marker:<10} {t_display}")
+   887→
+   888→    print("-" * 70)
+   889→    print("★ MAÇ    = MAÇ İÇİ oyun penceresi (League of Legends.exe + büyük boyut)")
+   890→    print("⚠ BEKLE  = process okunamadı ama boyut büyük (büyük ihtimalle oyun penceresi)")
+   891→    print("(boş)    = küçük pencere (splash/tray) veya excluded process")
+   892→    print()
+   893→    print("→ --window için ★ MAÇ veya ⚠ BEKLE işaretli pencerenin başlığını kopyala.")
+   894→    print("  TFT maç içi penceresi genelde: 'League of Legends (TM) Client' (1920x1080)")
+   895→    print()
+   896→    print("Örn: python capture.py --url ... --background --window \"League of Legends (TM) Client\"")
+   897→    return 0
+   898→
+   899→
+   900→def main():
+   901→    parser = argparse.ArgumentParser(
+   902→        description="TFT Adwer capture client — ekran yakalayıp web uygulamasına yollar."
+   903→    )
+   904→    parser.add_argument("--url", help="Web uygulamasının /api/snapshot URL'i")
+   905→    parser.add_argument("--interval", type=float, default=4.0, help="Yakalama aralığı (saniye)")
+   906→    parser.add_argument(
+   907→        "--monitor",
+   908→        type=int,
+   909→        default=0,
+   910→        help="Monitör indeksi (0=ana ekran). --window yoksa kullanılır.",
+   911→    )
+   912→    parser.add_argument(
+   913→        "--window",
+   914→        type=str,
+   915→        default="",
+   916→        help="Yakalanacak pencere adı (örn. 'League of Legends'). --region yerine kullanılır.",
+   917→    )
+   918→    parser.add_argument(
+   919→        "--region",
+   920→        type=int,
+   921→        nargs=4,
+   922→        metavar=("X", "Y", "W", "H"),
+   923→        default=None,
+   924→        help="Belirli bölge (x y w h piksel). --window ve --monitor override eder.",
+   925→    )
+   926→    parser.add_argument("--quality", type=int, default=90, help="JPEG kalitesi (1-95, default 90 — TFT text'in okunması için yüksek tutulur)")
+   927→    parser.add_argument(
+   928→        "--no-foreground-check",
+   929→        action="store_true",
+   930→        help="TFT ön planda değilse capture'ı atlama (varsayılan: atlar). "
+   931→             "Alt-tab yaptığında capture.py masaüstünü/Chrome'u yakalayıp VLM'in "
+   932→             "sapan değerler üretmesini engeller.",
+   933→    )
+   934→    parser.add_argument(
+   935→        "--no-crops",
+   936→        action="store_true",
+   937→        help="Board/bench crop gönderme (sadece tam ekran). VLM trait "
+   938→             "panelini board sanıyorsa ve crop bölgesi yanlışsa denenebilir. "
+   939→             "Normalde açık — crop VLM'in doğru champion okumasına yardımcı olur.",
+   940→    )
+   941→    parser.add_argument(
+   942→        "--background",
+   943→        action="store_true",
+   944→        help="Arka plan yakalama (windows-capture). TFT MAÇ İÇİ penceresini ön planda "
+   945→             "olmasa bile yakalar — alt-tab yapıp tarayıcıya baksan bile TFT "
+   946→             "okumaya devam eder. --window opsiyonel (verilmezse varsayılan: "
+   947→             "'League of Legends (TM) Client'). "
+   948→             "Kur: pip install windows-capture numpy. Sadece Windows 10 1903+.",
+   949→    )
+   950→    parser.add_argument(
+   951→        "--save-frames",
+   952→        type=str,
+   953→        default="",
+   954→        metavar="DIR",
+   955→        help="Her yakalanan frame'i bu klasöre JPEG olarak kaydet (debug için). "
+   956→             "Örn: --save-frames ./debug-frames. VLM yanlış ekran okuyorsa "
+   957→             "WGC/mss'nin ne yakaladığını görmek için kullan.",
+   958→    )
+   959→    parser.add_argument(
+   960→        "--list-windows",
+   961→        action="store_true",
+   962→        help="Tüm görünür pencereleri listele (başlık + process adı) ve çık. "
+   963→             "--window için doğru pencere adını bulmak için kullan. "
+   964→             "Örn: python capture.py --list-windows",
+   965→    )
+   966→    parser.add_argument(
+   967→        "--use-local",
+   968→        action="store_true",
+   969→        help="Local data kullan: Live API (port 2999) level + HP, Tesseract gold OCR. "
+   970→             "VLM'i bypass eder — level tamamen dogru, gold OCR. "
+   971→             "Kurulum: pip install pytesseract pillow + Tesseract binary.",
+   972→    )
+   973→    parser.add_argument(
+   974→        "--tesseract-path",
+   975→        default=None,
+   976→        help="Tesseract binary yolu. Windows default: "
+   977→             "C:\\\\Program Files\\\\Tesseract-OCR\\\\tesseract.exe",
+   978→    )
+   979→    parser.add_argument(
+   980→        "--gold-debug",
+   981→        action="store_true",
+   982→        help="Gold OCR debug: kırpılan görüntüyü + Tesseract çıktısını diske kaydet. "
+   983→             "Gold None dönüyorsa koordinatları/preprocessing'i kontrol et.",
+   984→    )
+   985→    parser.add_argument("--verbose", "-v", action="store_true", help="Detaylı çıktı")
+   986→    args = parser.parse_args()
+   987→
+   988→    # ─── List-windows mode: print all visible windows and exit ──────
+   989→    # Runs before --url validation so the user can run it without a URL.
+   990→    if args.list_windows:
+   991→        sys.exit(list_windows())
+   992→
+   993→    if not args.url:
+   994→        parser.error("--url gerekli")
+   995→
+   996→    # Background mode: --window opsiyonel. Verilmezse varsayılan olarak
+   997→    # "League of Legends (TM) Client" (TFT MAÇ İÇİ pencere) kullanılır.
+   998→    # _resolve_full_title process adı + boyut filtresiyle doğru pencereyi bulur.
+   999→    if args.background and not args.window:
+  1000→        args.window = "League of Legends (TM) Client"
+  1001→        print(f"  ℹ --window verilmedi, varsayılan: '{args.window}' (TFT maç içi pencere)")
+  1002→
+  1003→    # Set the global frame-save directory (used by send_image)
+  1004→    global SAVE_FRAMES_DIR
+  1005→    SAVE_FRAMES_DIR = args.save_frames or None
+  1006→
+  1007→    # ─── Capture mode: now we need PIL (always) + mss (foreground only) ────
+  1008→    try:
+  1009→        from PIL import Image as _Image
+  1010→        global Image
+  1011→        Image = _Image
+  1012→    except ImportError as e:
+  1013→        print(f"Eksik bağımlılık: {e.name}")
+  1014→        print("Çalıştır: pip install pillow requests")
+  1015→        sys.exit(1)
+  1016→
+  1017→    # Foreground mode also needs mss. Background mode uses windows-capture instead.
+  1018→    if not args.background:
+  1019→        try:
+  1020→            import mss as _mss
+  1021→            global mss
+  1022→            mss = _mss
+  1023→        except ImportError as e:
+  1024→            print(f"Eksik bağımlılık: {e.name}")
+  1025→            print("Çalıştır: pip install mss requests pillow")
+  1026→            sys.exit(1)
+  1027→
+  1028→    print("=" * 60)
+  1029→    print("TFT Adwer — Capture Client")
+  1030→    print("=" * 60)
+  1031→    print(f"  URL      : {args.url}")
+  1032→    print(f"  Interval : {args.interval}s")
+  1033→    print(f"  Quality  : {args.quality}")
+  1034→    capture_mode_label = "arka plan (windows-capture)" if args.background else "ön plan (mss)"
+  1035→    print(f"  Mod      : {capture_mode_label}")
+  1036→    if args.background:
+  1037→        print(f"  Pencere  : '{args.window}'")
+  1038→    crop_mode = "kapalı (--no-crops)" if args.no_crops else "açık (board+%25-75W, bench%67-78H)"
+  1039→    print(f"  Crops    : {crop_mode}")
+  1040→    if args.background:
+  1041→        # Foreground check is meaningless in background mode — we capture the
+  1042→        # TFT window directly, not whatever is on screen.
+  1043→        print(f"  FG Check : devre dışı (arka plan modunda anlamsız)")
+  1044→    else:
+  1045→        fg_mode = "kapalı (--no-foreground-check)" if args.no_foreground_check else "açık (TFT ön planda değilse atla)"
+  1046→        print(f"  FG Check : {fg_mode}")
+  1047→
+  1048→    # Local data (Live API + gold OCR) — --use-local flag ile.
+  1049→    global _LOCAL_READER
+  1050→    global _GOLD_DEBUG
+  1051→    _GOLD_DEBUG = args.gold_debug
+  1052→    if args.use_local:
+  1053→        try:
+  1054→            from local_reader import LocalReader
+  1055→            _LOCAL_READER = LocalReader(tesseract_path=args.tesseract_path)
+  1056→            print(f"  Local    : AÇIK (Live API level + Tesseract gold OCR)")
+  1057→            # Live API'yi hemen test et
+  1058→            live = _LOCAL_READER.read_live_api()
+  1059→            if live is None:
+  1060→                print(f"           ⚠ Live API şu an yok (TFT kapalı). TFT açılınca çalışır.")
+  1061→            else:
+  1062→                print(f"           ✅ Live API çalışıyor! Level={live['level']}")
+  1063→        except ImportError:
+  1064→            print(f"  Local    : KAPALI (local_reader.py bulunamadı)")
+  1065→            print(f"           Kur: pip install pytesseract pillow requests")
+  1066→            _LOCAL_READER = None
+  1067→        except Exception as e:
+  1068→            print(f"  Local    : hata — {e}")
+  1069→            _LOCAL_READER = None
+  1070→    else:
+  1071→        print(f"  Local    : kapalı (--use-local ile aç)")
+  1072→
+  1073→    print(f"  Çıkmak için: Ctrl+C")
+  1074→    print("=" * 60)
+  1075→
+  1076→    # Set up requests session
+  1077→    session = requests.Session()
+  1078→    session.headers.update({"Content-Type": "application/json"})
+  1079→
+  1080→    # ─── Background mode: start the WGC capturer once, then loop ──────────
+  1081→    # In background mode we don't need mss at all. The BackgroundCapturer runs
+  1082→    # a daemon thread that continuously captures the TFT window; the main loop
+  1083→    # just grabs the latest frame every `interval` seconds.
+  1084→    bg_capturer = None
+  1085→    if args.background:
+  1086→        print("\n  Arka plan yakalama başlatılıyor (windows-capture)...")
+  1087→        try:
+  1088→            bg_capturer = BackgroundCapturer(args.window, verbose=args.verbose)
+  1089→        except RuntimeError as e:
+  1090→            print(f"\n  ✗ {e}")
+  1091→            sys.exit(1)
+  1092→        # Give WGC a moment to produce the first frame
+  1093→        time.sleep(1.5)
+  1094→        if bg_capturer.is_closed:
+  1095→            print("  ✗ Capture oturumu hemen kapandı. TFT açık mı?")
+  1096→            sys.exit(1)
+  1097→        fc = bg_capturer.frame_count
+  1098→        print(f"  ✓ Arka plan capture aktif (ilk {fc} frame alındı)")
+  1099→        if fc == 0:
+  1100→            print("  ⏳ Henüz frame yok — TFT'yi oyuna girince frame'ler gelmeye başlar.")
+  1101→            print("     (Lobby'de TFT penceresi var ama WGC bazen ilk frame'i geciktirir.)")
+  1102→            print("     capture.py sessizce bekliyor, oyuna girdiğinde otomatik okumaya başlayacak.")
+  1103→
+  1104→    # ─── Foreground mode: set up mss + region ─────────────────────────────
+  1105→    sct = None
+  1106→    region: dict = {}
+  1107→    if not args.background:
+  1108→        sct = mss.mss()
+  1109→        if args.region:
+  1110→            x, y, w, h = args.region
+  1111→            region = {"left": x, "top": y, "width": w, "height": h, "mon": 0}
+  1112→            print(f"  Bölge    : {x},{y} {w}x{h}")
+  1113→        elif args.window:
+  1114→            found = find_window_region(args.window)
+  1115→            if found:
+  1116→                x, y, w, h = found
+  1117→                region = {"left": x, "top": y, "width": w, "height": h, "mon": 0}
+  1118→                print(f"  Pencere  : '{args.window}' → {x},{y} {w}x{h}")
+  1119→            else:
+  1120→                print(f"  Pencere '{args.window}' bulunamadı. Ana ekran kullanılacak.")
+  1121→                mon = sct.monitors[max(1, args.monitor + 1)] if args.monitor < len(sct.monitors) - 1 else sct.monitors[1]
+  1122→                region = mon
+  1123→                print(f"  Monitör  : {mon['width']}x{mon['height']}")
+  1124→        else:
+  1125→            # Default: primary monitor
+  1126→            mon_index = max(1, args.monitor + 1) if args.monitor + 1 < len(sct.monitors) else 1
+  1127→            mon = sct.monitors[mon_index]
+  1128→            region = mon
+  1129→            print(f"  Monitör  : {mon['width']}x{mon['height']} (index {args.monitor})")
+  1130→
+  1131→    print("=" * 60)
+  1132→
+  1133→    # Graceful shutdown
+  1134→    running = [True]
+  1135→
+  1136→    def on_sigint(sig, frame):
+  1137→        running[0] = False
+  1138→        print("\n  Durduruluyor...")
+  1139→
+  1140→    signal.signal(signal.SIGINT, on_sigint)
+  1141→
+  1142→    cycle = 0
+  1143→    ok_count = 0
+  1144→    err_count = 0
+  1145→    skip_count = 0  # Count of foreground-guard skips
+  1146→    consecutive_rate_limit = 0  # Track consecutive rate-limit responses
+  1147→    if SAVE_FRAMES_DIR:
+  1148→        print(f"  Save     : {SAVE_FRAMES_DIR} (her frame JPEG olarak kaydedilecek)")
+  1149→    print("=" * 60)
+  1150→    print("  Başladı. Oyuna gir ve beklemeye başla...\n")
+  1151→
+  1152→    try:
+  1153→        while running[0]:
+  1154→            cycle += 1
+  1155→            t_start = time.monotonic()
+  1156→
+  1157→            # Foreground guard (foreground mode only). In background mode we
+  1158→            # capture the TFT window directly, so this check is irrelevant.
+  1159→            if not args.background and not args.no_foreground_check:
+  1160→                is_fg, fg_title = is_tft_foreground()
+  1161→                if not is_fg:
+  1162→                    skip_count += 1
+  1163→                    # Truncate title so the line doesn't blow up
+  1164→                    short_title = (fg_title or "(empty)")[:40]
+  1165→                    print(f"  [{cycle}] ⊘ skip — TFT ön planda değil (aktif: '{short_title}')")
+  1166→                    # Sleep the full interval before retrying (no capture)
+  1167→                    time.sleep(args.interval)
+  1168→                    continue
+  1169→
+  1170→            # ─── Capture + send ─────────────────────────────────────────────
+  1171→            if args.background:
+  1172→                # Background mode: pull the latest frame from the WGC daemon thread
+  1173→                if bg_capturer.is_closed:
+  1174→                    print(f"  [{cycle}] ✗ arka plan capture kapandı (pencere kapatılmış?). Yeniden başlatmayı dene.")
+  1175→                    err_count += 1
+  1176→                    time.sleep(args.interval)
+  1177→                    continue
+  1178→                img = bg_capturer.grab_latest()
+  1179→                if img is None:
+  1180→                    print(f"  [{cycle}] ⏳ TFT penceresi bekleniyor... (henüz geçerli frame yok, oyuna girince başlar)")
+  1181→                    skip_count += 1
+  1182→                    time.sleep(args.interval)
+  1183→                    continue
+  1184→                ok, msg = send_image(
+  1185→                    img, session, args.url, args.quality, args.verbose,
+  1186→                    no_crops=args.no_crops,
+  1187→                )
+  1188→            else:
+  1189→                # Foreground mode: mss grab + send
+  1190→                ok, msg = capture_and_send(
+  1191→                    sct, session, args.url, region, args.monitor, args.quality, args.verbose,
+  1192→                    no_crops=args.no_crops,
+  1193→                )
+  1194→
+  1195→            if ok:
+  1196→                ok_count += 1
+  1197→                consecutive_rate_limit = 0
+  1198→                if not args.verbose:
+  1199→                    print(f"  [{cycle}] ✓ {msg}")
+  1200→            else:
+  1201→                err_count += 1
+  1202→                print(f"  [{cycle}] ✗ {msg}")
+  1203→                # If rate-limited, pause 60s instead of the normal interval
+  1204→                # to let the VLM API quota reset. Don't pause on "busy" (that's
+  1205→                # just the in-flight guard — next interval will retry).
+  1206→                if "rate-limited" in msg or "Pausing" in msg:
+  1207→                    consecutive_rate_limit += 1
+  1208→                    pause_s = 60
+  1209→                    # Escalate: 60s, then 90s, then 120s
+  1210→                    if consecutive_rate_limit > 1:
+  1211→                        pause_s = 60 + (consecutive_rate_limit - 1) * 30
+  1212→                    print(f"  ⏸  Rate limit detected — pausing {pause_s}s (streak: {consecutive_rate_limit})...")
+  1213→                    # Sleep in 1s increments so Ctrl+C stays responsive
+  1214→                    for _ in range(pause_s):
+  1215→                        if not running[0]:
+  1216→                            break
+  1217→                        time.sleep(1)
+  1218→                    continue
+  1219→
+  1220→            # Sleep the remainder of the interval
+  1221→            elapsed = time.monotonic() - t_start
+  1222→            sleep_for = max(0.5, args.interval - elapsed)
+  1223→            time.sleep(sleep_for)
+  1224→    finally:
+  1225→        if sct is not None:
+  1226→            try:
+  1227→                sct.close()
+  1228→            except Exception:
+  1229→                pass
+  1230→
+  1231→    print(f"\nBitti. {ok_count} başarılı, {err_count} hata, {skip_count} atlandı.")
+  1232→
+  1233→
+  1234→if __name__ == "__main__":
+  1235→    main()
+  1236→
