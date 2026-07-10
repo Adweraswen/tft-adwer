@@ -55,9 +55,7 @@ interface BenchAutoResult {
 
 interface BenchVariantResult {
   occupancyVariant: string;
-  fixedWidePrimary: BenchFixedResult;
-  fixedWideAlt: BenchFixedResult;
-  fixedShortPrimary: BenchFixedResult;
+  fixed: BenchFixedResult[];
   auto: BenchAutoResult;
   error: string | null;
 }
@@ -81,7 +79,8 @@ export function BenchOcrTester() {
   const [locked, setLocked] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [activeVariant, setActiveVariant] = useState(0);
-  const [mode, setMode] = useState<"wide-primary" | "wide-alt" | "short-primary" | "auto">("wide-primary");
+  const [mode, setMode] = useState<"auto" | "fixed">("auto");
+  const [fixedIdx, setFixedIdx] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const runTest = useCallback(async (file: File | null) => {
@@ -277,10 +276,8 @@ export function BenchOcrTester() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] uppercase tracking-wide text-zinc-600">mod:</span>
               {([
-                { id: "wide-primary", label: "geniş (y=720)" },
-                { id: "wide-alt", label: "geniş (+8px)" },
-                { id: "short-primary", label: "kısa (y=770)" },
-                { id: "auto", label: "auto-detect" },
+                { id: "auto", label: "auto-detect (önerilen)" },
+                { id: "fixed", label: "sabit koordinat" },
               ] as const).map((m) => (
                 <button
                   key={m.id}
@@ -304,18 +301,32 @@ export function BenchOcrTester() {
             )}
 
             {/* Fixed mode: 9-slot grid */}
-            {activeV && !activeV.error && (mode === "wide-primary" || mode === "wide-alt" || mode === "short-primary") && (
+            {activeV && !activeV.error && mode === "fixed" && activeV.fixed.length > 0 && (
               <div className="space-y-2">
+                {/* Koordinat seti seçici */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-wide text-zinc-600">koordinat seti:</span>
+                  {activeV.fixed.map((f, i) => (
+                    <button
+                      key={f.coordSet}
+                      onClick={() => setFixedIdx(i)}
+                      className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${
+                        i === fixedIdx
+                          ? "border-sky-500/50 bg-sky-500/15 text-sky-200"
+                          : "border-zinc-700 bg-zinc-900/40 text-zinc-500 hover:text-zinc-300"
+                      }`}
+                    >
+                      {f.coordSet} <span className="text-zinc-600">({f.occupiedCount})</span>
+                    </button>
+                  ))}
+                </div>
                 {(() => {
-                  const fixed = mode === "wide-primary" ? activeV.fixedWidePrimary
-                    : mode === "wide-alt" ? activeV.fixedWideAlt
-                    : activeV.fixedShortPrimary;
-                  const modeLabel = mode === "wide-primary" ? "geniş (y=720)" : mode === "wide-alt" ? "geniş (+8px)" : "kısa (y=770)";
+                  const fixed = activeV.fixed[fixedIdx] ?? activeV.fixed[0];
                   return (
                     <>
                       <div className="flex items-center justify-between">
                         <div className="text-[11px] text-zinc-400">
-                          Mod: <span className="text-zinc-200">{modeLabel}</span>
+                          Set: <span className="text-zinc-200">{fixed.coordSet}</span>
                           <span className="text-zinc-600 ml-2">· std≥<span className="text-zinc-300 tabular-nums">{fixed.stdThreshold}</span> & bright≥<span className="text-zinc-300 tabular-nums">{(fixed.brightMinRatio * 100).toFixed(0)}%</span></span>
                         </div>
                         <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-[10px] tabular-nums">

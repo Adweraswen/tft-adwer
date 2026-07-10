@@ -5682,3 +5682,32 @@ Stage Summary — 2 düzeltme TAMAM:
 - Shop sağ kırpma: 5/5 match korunuyor (Pantheon/Talon/Corki/Graves/Nami %100). Gerçek TFT'de "d"/"a" karışması azalmalı (gold number artık crop dışında).
 
 Kullanıcıya: Bench'i tekrar dene (crash yok artık), Shop'ta gold karışması azalmalı.
+
+---
+Task ID: shop-tr-aliases-bench-coords-008
+Agent: Z.ai Code (main)
+Task: Kullanıcı feedback: (1) Shop sol hiç kırpmadan başla + sağ bir tık daha kırp, (2) "Muhteşem Meka" Türkçe isim olduğu için match olmuyor, (3) Bench ilk slot atlanıyor + son slot 2 parçaya bölünüyor (koordinat kayması).
+
+Work Log:
+- Shop padding: SHOP_TEXT_LEFT_PAD 10→0 (sol hiç kırpmadan), SHOP_TEXT_RIGHT_PAD 32→40 (sağ bir tık daha kırp).
+- TR→EN şampiyon isim eşleme (subagent araştırma, Riot ddragon tr_TR locale, patch 16.13.1):
+  - "Muhteşem Meka" → "The Mighty Mech" (TFT17_Galio)
+  - "Micincik" → "Meepsie" (TFT17_IvernMinion)
+  - "Nunu ve Willump" → "Nunu & Willump" (TFT17_Nunu)
+  - Diğer 60 şampiyon TR=EN aynı. Sadece bu 3 farklı.
+  - TR_TO_EN_ALIASES tablosu eklendi (normalizeTr ile diacritics strip: İ→I, ı→i, ç→c, ğ→g, ö→o, ş→s, ü→u).
+  - fuzzyMatchChampion: alias resolved ise direkt EN champion'a %100 score ile dön (kısa devre).
+- Bench koordinat kayması: 4 koordinat seti eklendi (BENCH_COORD_SETS):
+  - A-535-110 (eski tahmin), B-515-110 (sola kaydır), C-525-100 (dar slot), D-490-110 (daha sola).
+  - Her set × 2 y-range (wide y=720 / short y=770) = 8 fixed result.
+  - benchSlotCenters/benchSlotBbox artık coordSet parametresi alır.
+  - BenchVariantResult: fixedWidePrimary/fixedWideAlt/fixedShortPrimary → fixed: BenchFixedResult[].
+  - UI: mode "auto"/"fixed" (default auto). Fixed modda koordinat seti seçici (8 buton, her biri occupiedCount gösterir).
+  - Auto mod öne çıktı — koordinat bağımsız, sabit koordinatlar yanlış olsa bile çalışır.
+
+Stage Summary:
+- Shop: sol padding 0, sağ 40px. TR alias tablosu: "Muhteşem Meka" artık "The Mighty Mech" olarak match olur (%100). Diacritics normalize (ş→s, vb.).
+- Bench: 4 koordinat seti + 2 y-range = 8 fixed result. Auto-detect default (koordinat bağımsız). UI crash yok, koordinat seti seçici var.
+- Sandbox test: Bench auto=4 (doğru), Shop 5/5. C/D koordinat setleri sandbox sample'da 6 sayıyor (geniş portreler komşu slota taşıyor) — gerçek TFT'de hangisi çalıştığını kullanıcı söyleyecek.
+
+Kullanıcıya: Shop'ta "Muhteşem Meka" artık match olmalı. Bench'te auto modu kullan (koordinat bağımsız), ya da sabit koordinat modunda 8 set'i tek tek dene, hangisi doğru sayıyorsa söyle.

@@ -33,13 +33,12 @@ import { CHAMPIONS } from "@/lib/tft-data";
 
 // ─── Shop card coordinates (1920x1080 reference) ───────────────────────────
 // TFT-OCR-BOT shop text band: (481, 1039, 1476, 1070). 5 cards, each ~199px wide.
-// REVISED (2026-07-10 user feedback v2): gold cost number is on the RIGHT of each
-// card (not left as I first assumed). NARROW the card text region — skip the
-// rightmost ~32px (where the gold number sits) and leftmost ~10px.
+// REVISED (2026-07-10 user feedback v3): sol padding 0 (hiç kırpmadan başla),
+// sağ padding 40px (gold cost number sağda, bir tık daha kırp).
 export const SHOP_BAND: [number, number, number, number] = [481, 1039, 1476, 1070];
 const SHOP_CARD_WIDTH_1080 = 199; // (1476-481)/5 ≈ 199
-const SHOP_TEXT_LEFT_PAD = 10;   // small left padding
-const SHOP_TEXT_RIGHT_PAD = 32;  // skip gold cost number on the right
+const SHOP_TEXT_LEFT_PAD = 0;    // sol hiç kırpmadan başla
+const SHOP_TEXT_RIGHT_PAD = 40;  // sağdan gold cost number için kırp
 
 function shopCardBboxes(): [number, number, number, number][] {
   const bboxes: [number, number, number, number][] = [];
@@ -135,8 +134,38 @@ export interface FuzzyMatch {
 }
 
 /**
+ * TR → EN champion name aliases (verified via Riot ddragon tr_TR locale, patch 16.13.1).
+ * Only 3 Set 17 champions have TR names that differ from EN. The OCR reads TR names
+ * from a Turkish client, so we map them to EN before fuzzy matching.
+ *
+ * Keys are pre-normalized (lowercase, diacritics stripped) for robust matching.
+ */
+const TR_TO_EN_ALIASES: Record<string, string> = {
+  "muhtesem meka": "The Mighty Mech",   // TFT17_Galio
+  "micincik": "Meepsie",                 // TFT17_IvernMinion
+  "nunu ve willump": "Nunu & Willump",   // TFT17_Nunu (& → ve in TR)
+};
+
+/**
+ * Normalize Turkish diacritics + lowercase for robust OCR matching.
+ * İ→i, ı→i, ç→c, ğ→g, ö→o, ş→s, ü→u
+ */
+function normalizeTr(s: string): string {
+  return s
+    .replace(/İ/g, "I")
+    .replace(/ı/g, "i")
+    .replace(/ç/g, "c")
+    .replace(/ğ/g, "g")
+    .replace(/ö/g, "o")
+    .replace(/ş/g, "s")
+    .replace(/ü/g, "u")
+    .toLowerCase();
+}
+
+/**
  * Match OCR text against the champion roster. Returns top 3 candidates.
- * Handles common OCR errors: I↔l↔1, O↔0, apostrophe insertion/deletion.
+ * Handles: TR→EN aliases, Turkish diacritics, OCR confusions (I↔l, O↔0),
+ * apostrophe variants, and partial/substring matches for long names.
  */
 function fuzzyMatchChampion(rawOcr: string): FuzzyMatch[] {
   if (!rawOcr || rawOcr.trim().length < 2) return [];
@@ -149,6 +178,18 @@ function fuzzyMatchChampion(rawOcr: string): FuzzyMatch[] {
     .replace(/[|]/g, "I")
     .replace(/[0]/g, "O")
     .toLowerCase();
+
+  // Turkish diacritics normalization (muhtesem meka, micincik, etc.)
+  const cleanedTr = normalizeTr(cleaned);
+
+  // Check TR aliases first — if OCR matches a TR name, resolve to EN champion directly.
+  const aliasResolved = TR_TO_EN_ALIASES[cleanedTr];
+  if (aliasResolved) {
+    const champ = CHAMPIONS.find((c) => c.name === aliasResolved);
+    if (champ) {
+      return [{ name: champ.name, cost: Math.round(0), score: 1.0 }];
+    }
+  }
 
   const candidates: FuzzyMatch[] = [];
   for (const champ of CHAMPIONS) {

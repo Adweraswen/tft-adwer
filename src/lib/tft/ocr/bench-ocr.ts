@@ -24,27 +24,42 @@ import {
 } from "./engine";
 
 // ─── Bench slot coordinates (1920x1080 reference) ──────────────────────────
-// REVISED (2026-07-10 user feedback): original y=770-845 (75px) only caught the
-// BOTTOM of the portrait — champions whose shadow didn't extend down were missed.
-// New: y=720-845 (125px) — captures the full portrait including head.
-// We keep the old short bbox as an alternative variant so the user can compare.
-const BENCH_Y_TOP = 720;        // widened: was 770
+// REVISED (2026-07-10 user feedback v2): koordinatlar yanlıştı — ilk slot atlanıyor,
+// 2. slot 1. sanılıyordu, son slot 2 parçaya bölünüyordu. Birden fazla koordinat
+// seti ekledik (farklı ilk-merkez + genişlik). Kullanıcı hangisinin çalıştığını söyler.
+//
+// NOT: auto-detect modu koordinat bağımsız — sabit koordinatlar yanlış olsa bile
+// yeşil/std kümelerini sayar. Gerçek TFT'de auto'yu kullan.
+const BENCH_Y_TOP = 720;
 const BENCH_Y_BOTTOM = 845;
-const BENCH_Y_TOP_SHORT = 770;  // old short variant (fallback)
-const BENCH_SLOT_WIDTH = 110;
-const BENCH_FIRST_SLOT_CENTER = 535;
+const BENCH_Y_TOP_SHORT = 770;
 
-function benchSlotCenters(): number[] {
-  return Array.from({ length: 9 }, (_, i) => BENCH_FIRST_SLOT_CENTER + i * BENCH_SLOT_WIDTH);
+// Koordinat seti varyantları: (isim, ilkSlotMerkez, slotGenişlik)
+interface BenchCoordSet {
+  name: string;
+  firstCenter: number;
+  slotWidth: number;
 }
 
-function benchSlotBbox(centerX: number, yTop: number = BENCH_Y_TOP): [number, number, number, number] {
-  const half = Math.floor(BENCH_SLOT_WIDTH / 2);
+const BENCH_COORD_SETS: BenchCoordSet[] = [
+  // Set A: eski tahmin (535, 110) — sandbox sample ile uyumlu
+  { name: "A-535-110", firstCenter: 535, slotWidth: 110 },
+  // Set B: biraz sola kaydır (515, 110) — ilk slot daha solda olabilir
+  { name: "B-515-110", firstCenter: 515, slotWidth: 110 },
+  // Set C: daha dar slotlar (100px) — 9 slot toplam 900px, merkez 525
+  { name: "C-525-100", firstCenter: 525, slotWidth: 100 },
+  // Set D: TFT-OCR-BOT'a göre bench x=480-1476 (996px / 9 = 110.6px), ilk merkez 480+55=535
+  // ama biz ilk merkezi biraz daha sola alalım (470+55=525) — kenar boşluğu olabilir
+  { name: "D-490-110", firstCenter: 490, slotWidth: 110 },
+];
+
+function benchSlotCenters(coordSet: BenchCoordSet = BENCH_COORD_SETS[0]): number[] {
+  return Array.from({ length: 9 }, (_, i) => coordSet.firstCenter + i * coordSet.slotWidth);
+}
+
+function benchSlotBbox(centerX: number, yTop: number, slotWidth: number): [number, number, number, number] {
+  const half = Math.floor(slotWidth / 2);
   return [centerX - half, yTop, centerX + half, BENCH_Y_BOTTOM];
-}
-
-function benchSlotCentersAlt(): number[] {
-  return benchSlotCenters().map((x) => x + 8);
 }
 
 // ─── Occupancy detection variants ─────────────────────────────────────────
@@ -79,7 +94,8 @@ export interface BenchSlotResult {
 
 export interface BenchFixedResult {
   variantName: string;
-  coordSet: "wide-primary" | "wide-alt" | "short-primary";
+  /** Koordinat seti adı (A-535-110, B-515-110, vb.) + y-range (wide/short). */
+  coordSet: string;
   stdThreshold: number;
   brightMinRatio: number;
   slots: BenchSlotResult[];
@@ -103,9 +119,8 @@ export interface BenchAutoResult {
 
 export interface BenchVariantResult {
   occupancyVariant: string;
-  fixedWidePrimary: BenchFixedResult;
-  fixedWideAlt: BenchFixedResult;
-  fixedShortPrimary: BenchFixedResult;
+  /** Her koordinat seti için ayrı fixed result (4 set × 2 y-range = 8). */
+  fixed: BenchFixedResult[];
   auto: BenchAutoResult;
   error: string | null;
 }
@@ -172,19 +187,19 @@ async function runFixedMode(
   pngBuf: Buffer,
   imgW: number,
   imgH: number,
-  centers: number[],
-  coordSet: "wide-primary" | "wide-alt" | "short-primary",
+  coordSet: BenchCoordSet,
+  yTop: number,
+  yLabel: string,
   variant: OccupancyVariant
 ): Promise<BenchFixedResult> {
   const slots: BenchSlotResult[] = [];
   const occupiedIndices: number[] = [];
-  const yTop = coordSet === "short-primary" ? BENCH_Y_TOP_SHORT : BENCH_Y_TOP;
+  const centers = benchSlotCenters(coordSet);
 
   for (let i = 0; i < 9; i++) {
-    const bbox1080 = benchSlotBbox(centers[i], yTop);
+    const bbox1080 = benchSlotBbox(centers[i], yTop, coordSet.slotWidth);
     const region = scaleBbox(bbox1080, imgW, imgH);
     const stats = await computeLumStats(pngBuf, region);
-    // Occupied if std-dev high AND enough bright pixels (not just noise).
     const occupied = stats.std >= variant.stdThreshold && stats.brightRatio >= variant.brightMinRatio;
     const cropPng = await cropRegion(pngBuf, region);
     slots.push({
@@ -201,7 +216,7 @@ async function runFixedMode(
 
   return {
     variantName: variant.name,
-    coordSet,
+    coordSet: `${coordSet.name}/${yLabel}`,
     stdThreshold: variant.stdThreshold,
     brightMinRatio: variant.brightMinRatio,
     slots,
@@ -267,14 +282,16 @@ async function runAutoMode(
       const width = x - clusterStart;
       if (width >= MIN_WIDTH) {
         const centerXImg = bandLeft + clusterStart + Math.floor(width / 2);
-        const centers1080 = benchSlotCenters();
+        // Auto mod: koordinat bağımsız. mappedSlotIndex hesabı için en iyi
+        // koordinat setini (A) kullan, ama eşleşme olmazsa null bırak.
+        const centers1080 = benchSlotCenters(BENCH_COORD_SETS[0]);
         const scaleX = imgW / 1920;
         let nearest: number | null = null;
         let nearestDist = Infinity;
         for (let s = 0; s < 9; s++) {
           const slotCenterImg = centers1080[s] * scaleX;
           const dist = Math.abs(centerXImg - slotCenterImg);
-          if (dist < nearestDist && dist < (BENCH_SLOT_WIDTH * scaleX) / 2) {
+          if (dist < nearestDist && dist < (BENCH_COORD_SETS[0].slotWidth * scaleX) / 2) {
             nearestDist = dist;
             nearest = s;
           }
@@ -326,30 +343,27 @@ export async function runBenchOcrSweep(fullImage: Buffer): Promise<BenchOcrResul
 
   for (const ov of OCCUPANCY_VARIANTS) {
     try {
-      const fixedWidePrimary = await runFixedMode(pngBuf, imgW, imgH, benchSlotCenters(), "wide-primary", ov);
-      const fixedWideAlt = await runFixedMode(pngBuf, imgW, imgH, benchSlotCentersAlt(), "wide-alt", ov);
-      const fixedShortPrimary = await runFixedMode(pngBuf, imgW, imgH, benchSlotCenters(), "short-primary", ov);
+      // Her koordinat seti × 2 y-range (wide/short) = 8 fixed result
+      const fixed: BenchFixedResult[] = [];
+      for (const cs of BENCH_COORD_SETS) {
+        fixed.push(await runFixedMode(pngBuf, imgW, imgH, cs, BENCH_Y_TOP, "wide", ov));
+        fixed.push(await runFixedMode(pngBuf, imgW, imgH, cs, BENCH_Y_TOP_SHORT, "short", ov));
+      }
       const auto = await runAutoMode(pngBuf, imgW, imgH, ov);
 
       variants.push({
         occupancyVariant: ov.name,
-        fixedWidePrimary,
-        fixedWideAlt,
-        fixedShortPrimary,
+        fixed,
         auto,
         error: null,
       });
 
-      counts.push(fixedWidePrimary.occupiedCount);
-      counts.push(fixedWideAlt.occupiedCount);
-      counts.push(fixedShortPrimary.occupiedCount);
+      for (const f of fixed) counts.push(f.occupiedCount);
       counts.push(auto.occupiedCount);
     } catch (e) {
       variants.push({
         occupancyVariant: ov.name,
-        fixedWidePrimary: { variantName: ov.name, coordSet: "wide-primary", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
-        fixedWideAlt: { variantName: ov.name, coordSet: "wide-alt", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
-        fixedShortPrimary: { variantName: ov.name, coordSet: "short-primary", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
+        fixed: [],
         auto: { variantName: ov.name, clusters: [], occupiedCount: 0 },
         error: e instanceof Error ? e.message : String(e),
       });
