@@ -17,11 +17,11 @@ import sharp from "sharp";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Bench geometry — must match bench-ocr.ts constants.
-const BENCH_Y_TOP = 700;
-const BENCH_Y_BOTTOM = 880;
-const BENCH_SLOT_WIDTH = 118;
-const BENCH_FIRST_SLOT_CENTER = 429;
+// Bench geometry — TFT-OCR-BOT production koordinatları.
+const BENCH_Y_TOP = 650;
+const BENCH_Y_BOTTOM = 757;
+const BENCH_SLOT_WIDTH = 103;
+const BENCH_FIRST_SLOT_CENTER = 420;
 // Health bar y konumu (upper candidate ile senkron: y=735-760)
 const HEALTH_BAR_Y_TOP = 735;
 const HEALTH_BAR_Y_BOTTOM = 760;

@@ -24,17 +24,14 @@ interface BenchSlotResult {
   index: number;
   bbox: [number, number, number, number];
   occupied: boolean;
-  greenPixelCount: number;
-  contiguousGreen: number;
+  stdDev: number;
   cropB64: string;
 }
 
 interface BenchFixedResult {
   variantName: string;
   coordSet: string;
-  convolveWindow: number;
-  minGreenPixels: number;
-  tolerance: number;
+  stdThreshold: number;
   slots: BenchSlotResult[];
   occupiedCount: number;
   occupiedIndices: number[];
@@ -43,7 +40,7 @@ interface BenchFixedResult {
 interface BenchAutoCluster {
   centerX: number;
   width: number;
-  greenCount: number;
+  avgStd: number;
   mappedSlotIndex: number | null;
 }
 
@@ -327,7 +324,7 @@ export function BenchOcrTester() {
                       <div className="flex items-center justify-between">
                         <div className="text-[11px] text-zinc-400">
                           Set: <span className="text-zinc-200">{fixed.coordSet}</span>
-                          <span className="text-zinc-600 ml-2">· yeşil≥<span className="text-zinc-300 tabular-nums">{fixed.minGreenPixels}</span>px & cont≥<span className="text-zinc-300 tabular-nums">{fixed.convolveWindow}</span>{fixed.tolerance > 0 && <span className="text-amber-400"> (tol±{fixed.tolerance})</span>}</span>
+                          <span className="text-zinc-600 ml-2">· std≥<span className="text-zinc-300 tabular-nums">{fixed.stdThreshold}</span></span>
                         </div>
                         <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-[10px] tabular-nums">
                           {fixed.occupiedCount}/9 dolu
@@ -356,13 +353,13 @@ export function BenchOcrTester() {
                               {slot.cropB64 ? <img src={slot.cropB64} alt={`slot ${slot.index + 1}`} className="w-full h-10 object-cover" /> : <div className="w-full h-10 bg-zinc-950" />}
                             </div>
                             <div className="px-1 py-0.5 text-[8px] text-zinc-600 tabular-nums">
-                              yeşil:{slot.greenPixelCount} · cont:{slot.contiguousGreen}
+                              σ{slot.stdDev.toFixed(0)}
                             </div>
                           </div>
                         ))}
                       </div>
                       <div className="text-[10px] text-zinc-500">
-                        Yeşil piksel: {fixed.slots.map((s) => s.occupied ? `${s.index + 1}→${s.greenPixelCount}px` : null).filter(Boolean).join(" · ") || "yok"}
+                        Std-dev: {fixed.slots.map((s) => s.occupied ? `${s.index + 1}→σ${s.stdDev.toFixed(0)}` : null).filter(Boolean).join(" · ") || "yok"}
                       </div>
                     </>
                   );
@@ -394,7 +391,7 @@ export function BenchOcrTester() {
                         <span className="text-zinc-400">küme {i + 1}:</span>
                         <span className="text-zinc-200 tabular-nums">x={c.centerX}</span>
                         <span className="text-zinc-500 tabular-nums">w={c.width}px</span>
-                        <span className="text-zinc-500 tabular-nums">yeşil:{c.greenCount}px</span>
+                        <span className="text-zinc-500 tabular-nums">σ{c.avgStd.toFixed(0)}</span>
                         {c.mappedSlotIndex !== null ? (
                           <Badge variant="outline" className="ml-auto border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-[9px]">
                             slot #{c.mappedSlotIndex + 1}
