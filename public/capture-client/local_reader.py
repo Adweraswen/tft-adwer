@@ -87,6 +87,27 @@ GOLD_VARIANTS = [
 ]
 
 
+# ─── Round OCR koordinatları (1920x1080) ────────────────────────────────────
+# PLAN.md 15.5: TFT-OCR-BOT koordinatları (753, 10, 870, 34) — stage-round göstergesi.
+# TFT'de üst-ortada "3-2" gibi beyaz text görünür. PSM7, "0123456789-" whitelist.
+ROUND_CROP_1080P_PRIMARY = (753, 10, 870, 34)   # TFT-OCR-BOT (PLAN 15.5)
+ROUND_CROP_1080P_WIDE = (740, 6, 890, 40)       # fallback (daha geniş)
+
+# Çoklu varyant — /api/round-ocr-test ile senkron.
+ROUND_VARIANTS = [
+    ("tft-ocr-bot/180/3x/psm7",  ROUND_CROP_1080P_PRIMARY, 180, 3, 7),
+    ("tft-ocr-bot/160/3x/psm7",  ROUND_CROP_1080P_PRIMARY, 160, 3, 7),
+    ("tft-ocr-bot/200/3x/psm7",  ROUND_CROP_1080P_PRIMARY, 200, 3, 7),
+    ("tft-ocr-bot/180/4x/psm7",  ROUND_CROP_1080P_PRIMARY, 180, 4, 7),
+    ("tft-ocr-bot/180/3x/psm8",  ROUND_CROP_1080P_PRIMARY, 180, 3, 8),
+    ("wide/180/3x/psm7",         ROUND_CROP_1080P_WIDE,    180, 3, 7),
+    ("wide/160/3x/psm7",         ROUND_CROP_1080P_WIDE,    160, 3, 7),
+    ("wide/200/3x/psm7",         ROUND_CROP_1080P_WIDE,    200, 3, 7),
+]
+
+ROUND_WHITELIST = "0123456789-"
+
+
 # ─── LocalReader ────────────────────────────────────────────────────────────
 
 class LocalReader:

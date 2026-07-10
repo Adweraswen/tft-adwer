@@ -1,0 +1,130 @@
+{
+  "ts": 1783642139301,
+  "bestGold": 44,
+  "bestVariant": "tft-ocr-bot/180/3x/psm7",
+  "imageWidth": 1920,
+  "imageHeight": 1080,
+  "tesseractAvailable": true,
+  "variants": [
+    {
+      "name": "tft-ocr-bot/180/3x/psm7",
+      "bbox": [
+        870,
+        883,
+        920,
+        909
+      ],
+      "threshold": 180,
+      "scale": 3,
+      "psm": 7,
+      "rawOcr": "44",
+      "gold": 44,
+      "error": null
+    },
+    {
+      "name": "tft-ocr-bot/160/3x/psm7",
+      "bbox": [
+        870,
+        883,
+        920,
+        909
+      ],
+      "threshold": 160,
+      "scale": 3,
+      "psm": 7,
+      "rawOcr": "44",
+      "gold": 44,
+      "error": null
+    },
+    {
+      "name": "tft-ocr-bot/200/3x/psm7",
+      "bbox": [
+        870,
+        883,
+        920,
+        909
+      ],
+      "threshold": 200,
+      "scale": 3,
+      "psm": 7,
+      "rawOcr": "",
+      "gold": null,
+      "error": null
+    },
+    {
+      "name": "tft-ocr-bot/180/4x/psm7",
+      "bbox": [
+        870,
+        883,
+        920,
+        909
+      ],
+      "threshold": 180,
+      "scale": 4,
+      "psm": 7,
+      "rawOcr": "44",
+      "gold": 44,
+      "error": null
+    },
+    {
+      "name": "tft-ocr-bot/180/3x/psm8",
+      "bbox": [
+        870,
+        883,
+        920,
+        909
+      ],
+      "threshold": 180,
+      "scale": 3,
+      "psm": 8,
+      "rawOcr": "44",
+      "gold": 44,
+      "error": null
+    },
+    {
+      "name": "paint/180/3x/psm7",
+      "bbox": [
+        913,
+        879,
+        1033,
+        910
+      ],
+      "threshold": 180,
+      "scale": 3,
+      "psm": 7,
+      "rawOcr": "",
+      "gold": null,
+      "error": null
+    },
+    {
+      "name": "paint/160/3x/psm7",
+      "bbox": [
+        913,
+        879,
+        1033,
+        910
+      ],
+      "threshold": 160,
+      "scale": 3,
+      "psm": 7,
+      "rawOcr": "",
+      "gold": null,
+      "error": null
+    },
+    {
+      "name": "paint/200/3x/psm7",
+      "bbox": [
+        913,
+        879,
+        1033,
+        910
+      ],
+      "threshold": 200,
+      "scale": 3,
+      "psm": 7,
+      "rawOcr": "",
+      "gold": null,
+      "error": null
+    }
+  ]
+}
