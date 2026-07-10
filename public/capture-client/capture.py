@@ -642,6 +642,7 @@ def capture_and_send(
     quality: int,
     verbose: bool,
     no_crops: bool = False,
+    skip_vlm: bool = False,
 ) -> tuple[bool, str]:
     """Capture one frame (mss foreground) and POST it. Returns (ok, message).
 
@@ -663,7 +664,7 @@ def capture_and_send(
     except Exception as e:
         return False, f"görüntü dönüşüm hatası: {e}"
 
-    return send_image(img, requests_session, url, quality, verbose, no_crops, t0)
+    return send_image(img, requests_session, url, quality, verbose, no_crops, t0, skip_vlm=skip_vlm)
 
 
 def send_image(
@@ -674,6 +675,7 @@ def send_image(
     verbose: bool,
     no_crops: bool = False,
     t0: Optional[float] = None,
+    skip_vlm: bool = False,
 ) -> tuple[bool, str]:
     """Encode a PIL Image (RGB) to JPEG + crops, POST to server. Returns (ok, message).
 
@@ -683,6 +685,11 @@ def send_image(
 
     Sends the full screenshot PLUS cropped board and bench regions so the VLM
     can read champions from a zoomed-in view. Pass no_crops=True to disable.
+
+    skip_vlm=True: image encode + crops TAMAMEN atlanır. Sadece Live API +
+    gold OCR verisi gönderilir (payload.skipVlm=true). Sunucu VLM çağırmaz,
+    direkt localData'dan state üretir. HP/gold/level testi için — VLM
+    halüsinasyonları sıfır, hız ~50ms (normal VLM 3-8s).
     """
     if t0 is None:
         t0 = time.monotonic()
@@ -702,6 +709,54 @@ def send_image(
         except Exception as e:
             if verbose:
                 print(f"  [debug] frame kaydetme hatası: {e}")
+
+    # ─── Skip-VLM mode: image encode'u atla, sadece localData gönder ──────
+    # VLM çağrılmayacağı için JPEG encode, base64, crop'lar HİÇBİRİ gerekmez.
+    # Bu mod Live API + gold OCR testi için — HP/gold/level doğruluğunu
+    # VLM gürültüsü olmadan görmek.
+    if skip_vlm:
+        payload = {"source": "live", "skipVlm": True}
+        if _LOCAL_READER is not None:
+            try:
+                local = _LOCAL_READER.read(img, debug=_GOLD_DEBUG)
+                payload["localData"] = local
+                if verbose:
+                    print(f"  [skip-vlm] connected={local['connected']} "
+                          f"level={local['level']} gold={local['gold']} "
+                          f"hp={local['hp']}"
+                          + (f" src={local.get('hp_source')}" if local.get('hp_source') else ""))
+            except Exception as e:
+                if verbose:
+                    print(f"  [skip-vlm] local hata: {e}")
+                return False, f"local reader hatası: {e}"
+        else:
+            if verbose:
+                print(f"  [skip-vlm] ⚠ --use-local yok, localData boş. skipVlm anlamsız.")
+            return False, "skip-vlm requires --use-local"
+
+        resp = requests_session.post(
+            url,
+            json=payload,
+            timeout=30,
+        )
+        elapsed = time.monotonic() - t0
+        if resp.status_code != 200:
+            return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        data = resp.json()
+        ok = data.get("ok", False)
+        oneliner = (data.get("recommendation") or {}).get("oneLiner", "")
+        state = data.get("state") or {}
+        summary = (
+            f"hp={state.get('hp')} gold={state.get('gold')} "
+            f"lvl={state.get('level')} connected={state.get('connected')}"
+        )
+        if verbose:
+            print(f"  [{elapsed*1000:.0f}ms] {summary}")
+            if oneliner:
+                print(f"  → {oneliner}")
+        if not ok and data.get("error"):
+            return False, f"sunucu hatası: {data['error']}"
+        return True, summary
 
     # Encode full screenshot to JPEG
     try:
@@ -982,6 +1037,15 @@ def main():
         help="Gold OCR debug: kırpılan görüntüyü + Tesseract çıktısını diske kaydet. "
              "Gold None dönüyorsa koordinatları/preprocessing'i kontrol et.",
     )
+    parser.add_argument(
+        "--skip-vlm",
+        action="store_true",
+        help="VLM'i tamamen atla. Sadece Live API (level+HP) + Tesseract gold OCR "
+             "gönderilir, sunucu VLM çağırmaz. HP/gold/level doğruluğunu VLM "
+             "gürültüsü olmadan test etmek için. --use-local ile birlikte kullan. "
+             "Hız: ~50ms (normal VLM 3-8s). "
+             "shop/board/bench/augments BOŞ kalır (VLM okumadı).",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Detaylı çıktı")
     args = parser.parse_args()
 
@@ -1069,6 +1133,15 @@ def main():
             _LOCAL_READER = None
     else:
         print(f"  Local    : kapalı (--use-local ile aç)")
+
+    # Skip-VLM mode (Live API only, image encode atlanır)
+    if args.skip_vlm:
+        if not args.use_local:
+            print(f"  Skip-VLM : ⚠ --use-local gerekli! skip-vlm tek başına anlamsız.")
+            sys.exit(1)
+        print(f"  Skip-VLM : AÇIK (VLM çağrılmaz, sadece Live API + gold OCR)")
+        print(f"           Hız: ~50ms/snapshot (normal VLM 3-8s)")
+        print(f"           shop/board/bench/augments BOŞ kalır")
 
     print(f"  Çıkmak için: Ctrl+C")
     print("=" * 60)
@@ -1184,12 +1257,14 @@ def main():
                 ok, msg = send_image(
                     img, session, args.url, args.quality, args.verbose,
                     no_crops=args.no_crops,
+                    skip_vlm=args.skip_vlm,
                 )
             else:
                 # Foreground mode: mss grab + send
                 ok, msg = capture_and_send(
                     sct, session, args.url, region, args.monitor, args.quality, args.verbose,
                     no_crops=args.no_crops,
+                    skip_vlm=args.skip_vlm,
                 )
 
             if ok:

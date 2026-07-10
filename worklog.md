@@ -6272,3 +6272,32 @@ Stage Summary — Kullanıcıya 3 aşamalı test anlatıldı:
 - "Dün HP yoktu" yanılgısının sebebi: probe loading screen'de (gameTime=0s) yapılmış, championStats o an JSON'da yok. TFT-OCR-BOT bunu 1-1'den sonra çağırıyor — bizimki de aynı.
 - Fallback plan (eğer Live API gerçekten çalışmıyorsa): sağ sütun leaderboard + altın border highlight tespiti (OCR).
 - HP'nin "değişken sıralama" sorunu Live API ile tamamen ortadan kalktı — API hangi sırada olursa olsun activePlayer'ın HP'sini veriyor.
+
+---
+Task ID: skip-vlm-mode
+Agent: Z.ai Code (main)
+Task: --skip-vlm modu ekle. Live API testi sırasında VLM tamamen devre dışı kalsın — yavaş (3-8s) ve memory yiyor. HP/gold/level'i VLM gürültüsü olmadan test et.
+
+Work Log:
+- snapshot/route.ts: yeni 3. path eklendi — `skipVlm && localData` (image yok, state yok).
+  - emptyState(source) oluştur
+  - localData'dan level/gold/hp/connected yaz
+  - VLM hiç çağrılmaz, sanity filter atlanır
+  - Console log: `[snapshot] SKIP-VLM | connected=... hp=... gold=... lvl=... | hp_source=... | gameTime=...s`
+- capture.py: send_image() fonksiyonuna `skip_vlm: bool = False` parametresi eklendi.
+  - skip_vlm=True: image encode + crops TAMAMEN atlanır. Sadece localData gönderilir.
+  - payload: {"source": "live", "skipVlm": true, "localData": {...}}
+  - verbose: `[skip-vlm] connected=... level=... gold=... hp=... src=...`
+  - Hız: ~50ms (VLM 3-8s)
+- capture_and_send() fonksiyonuna skip_vlm geçirildi.
+- main loop'taki send_image() ve capture_and_send() çağrılarına `skip_vlm=args.skip_vlm` eklendi.
+- Yeni flag: `--skip-vlm` (action="store_true"). --use-local ile birlikte kullanılmalı, yoksa sys.exit(1).
+- Başlık print'i: Skip-VLM AÇIK / hız / shop-board-bench boş uyarısı.
+- lint temiz, dev log temiz.
+
+Stage Summary — VLM tamamen devre dışı bırakılabiliyor:
+- `--skip-vlm --use-local` kombinasyonu: VLM çağrılmaz, sadece Live API + Tesseract gold OCR.
+- Test komutu: `python capture.py --url http://localhost:3000/api/snapshot --use-local --skip-vlm --background -v`
+- HP/gold/level doğruluğu artık VLM gürültüsü olmadan test edilebilir.
+- shop/board/bench/augments BOŞ kalır (VLM okumadı) — bu mod sadece stats testi için.
+- Dev log'da `SKIP-VLM` satırı görünür — local override log'u (VLM path'teki) görünmez.

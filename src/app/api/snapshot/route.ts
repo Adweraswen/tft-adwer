@@ -254,9 +254,37 @@ export async function POST(req: NextRequest) {
   } else if (body.state) {
     // Direct state path (manual entry / testing)
     state = mergeState(body.state, source);
+  } else if (body.skipVlm && body.localData) {
+    // ─── Skip-VLM path: Live API only (no image, no VLM) ────────────────
+    // capture.py --skip-vlm --use-local modu için. VLM tamamen atlanır,
+    // sadece Live API + gold OCR'dan state üretilir. Hız: ~50ms (VLM 3-8s).
+    //
+    // Kullanım: HP/gold/level Live API testi için. VLM halüsinasyonları
+    // tamamen devre dışı — gördüğün her değer ya Live API'den ya OCR'den.
+    //
+    // shop/board/bench/augments BOŞ kalır (VLM okumadı). advisor yine de
+    // level/gold/HP'ye göre temel tavsiyeler üretir.
+    state = emptyState(source);
+    const ld = body.localData;
+    state.connected = ld.connected === true;
+    if (typeof ld.level === "number" && ld.level >= 1 && ld.level <= 10) {
+      state.level = ld.level;
+    }
+    if (typeof ld.gold === "number" && ld.gold >= 0 && ld.gold <= 999) {
+      state.gold = ld.gold;
+    }
+    if (typeof ld.hp === "number" && ld.hp >= 0 && ld.hp <= 200) {
+      state.hp = ld.hp;
+    }
+    console.log(
+      `[snapshot] SKIP-VLM | connected=${state.connected} hp=${state.hp} ` +
+        `gold=${state.gold} lvl=${state.level}` +
+        (ld.hp_source ? ` | hp_source=${ld.hp_source}` : "") +
+        (ld.game_time !== undefined ? ` | gameTime=${ld.game_time}s` : "")
+    );
   } else {
     return NextResponse.json(
-      { ok: false, error: "Provide either `image` (base64 data URL) or `state`." },
+      { ok: false, error: "Provide either `image` (base64 data URL) or `state`, or use `skipVlm` + `localData`." },
       { status: 400 }
     );
   }
