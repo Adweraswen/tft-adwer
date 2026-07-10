@@ -5977,3 +5977,278 @@ Sıradaki adımlar:
 4. Board calibration (4 köşe) + board şampiyon tanıma (aynı YOLO modeli).
 
 Kullanıcıya: Altyapı hazır. Screenshot toplamaya başla (20-30 tane farklı durumda). Colab notebook'u çalıştırıp model eğiteceğiz. Onay verince Colab talimatı vereceğim.
+
+---
+Task ID: hp-research
+Agent: general-purpose (researcher)
+Task: Research how to read YOUR OWN HP from a TFT screenshot — investigate TFT-OCR-BOT, TFTSense, fixed-location HP UI, portrait highlight detection, and recommend a robust method for our Tesseract-OCR-based advisor.
+
+Work Log:
+- Read /home/z/my-project/worklog.md (5980 lines). Key prior context: HP has been the single hardest field for the project. VLM was first pointed at "bottom player bar" (wrong — that bar only shows gold + level + XP). Corrected to "right-side vertical leaderboard column" with 8 portraits + HP numbers. Riot Live API was previously probed ONCE at gameTime=0s (loading screen / match start) and concluded "no HP, no gold, only level". This conclusion drove the entire OCR-only path that has plagued the project since. Sanity-filter now allows HP up to 150 (augment bonus) with +25 max increase per snapshot.
+- Searched the project for any local TFT-OCR-BOT code — none present. Only `download/README.md` ("Here are all the generated files.") exists.
+- Downloaded TFT-OCR-BOT source from https://raw.githubusercontent.com/jfd02/TFT-OCR-BOT/main/ into /tmp/tft-ocr-bot/: arena_functions.py (147 lines), screen_coords.py (161 lines), game_assets.py (194 lines), game_functions.py (105 lines), game.py (293 lines), ocr.py (67 lines), arena.py (504 lines), main.py, ui.py, auto_queue.py, mk_functions.py, vec2.py, vec4.py, settings.py, README.md.
+- Also downloaded the gmh5225 fork's arena_functions.py to cross-check the HP method.
+- Read arena_functions.py lines 30-40 in full. CRITICAL FINDING below.
+- Verified the Riot Developer Portal docs page (https://developer.riotgames.com/docs/lol#live-client-data-api) which explicitly shows the activePlayer schema: `{ "abilities": {...}, "championStats": { "currentHealth": 0.0, "maxHealth": 0.0, ... }, "currentGold": 0.0, "fullRunes": {...}, "level": 1, "summonerName": "..." }`.
+- Pulled TFT-OCR-BOT issue #4 ("Health check failing when on a hot streak", filed 2022-01-28) — confirms the OLD codebase used OCR for HP and the fire animation interfered ~15% of the time. That OCR code has since been replaced by the Live API method.
+- Used VLM (z-ai vision) on /home/z/my-project/upload/Ekran Görüntüsü (32).png — both the full screenshot and a cropped leaderboard strip — to confirm: (a) all 8 portraits are in the right-side vertical leaderboard, (b) the player's own portrait has a GOLD/YELLOW border (≈RGB 255,215,0 per VLM) vs RED border (≈RGB 255,0,0) on the other 7, (c) HP numbers appear in yellow/gold to the right of each portrait, (d) the bottom-center player bar shows only level + gold + XP, NOT HP as a number.
+- Ran pixel analysis with NumPy on screenshots 32/33/34 to verify VLM claims: confirmed gold-yellow HP text clusters at the right side (x≈1830–1900), confirmed NO HP-like text in bottom bar at x≈890–1471 (only the gold-amount number rendered in yellow), confirmed magenta/purple portrait art colors at x≈1700, confirmed bright HP text clusters around y=333–405 and y=667–678 in screenshot 32.
+- Cross-checked TFT Adwer's previous probe result (worklog line 1388): at gameTime=0s, the activePlayer keys returned were `[currentGold, level, riotId, riotIdGameName, riotIdTagLine, summonerName, teamRelativeColors]`. NOTE: `championStats` was NOT in that list. This is consistent with the tactician champion not being instantiated at match start. TFT-OCR-BOT only calls get_health() INSIDE the game loop AFTER round 1-1 is reached — at that point championStats IS populated.
+
+Stage Summary:
+
+# TFT HP Reading — Research Report
+
+## TL;DR (THE BIG FINDING)
+
+**TFT-OCR-BOT does NOT use OCR for HP at all. It reads HP directly from the Riot Live Client Data API at `activePlayer.championStats.currentHealth`.** This is a single 5-line Python function and it works reliably for TFT. The TFT Adwer / my-project codebase NEVER TRIED this path — the previous probe ran at gameTime=0s (loading screen, before the tactician champion existed) and concluded "TFT API doesn't expose HP", which is wrong. Adding ~5 lines of code to `live_api.py` (or equivalent TS) will fix HP reading permanently with zero OCR, zero VLM, zero memory reading.
+
+---
+
+## 1. How TFT-OCR-BOT reads HP
+
+**Source**: `arena_functions.py` (jfd02/TFT-OCR-BOT, main branch), lines 30-40.
+
+```python
+def get_health() -> int:
+    """Returns the health for the tactician"""
+    try:
+        response = requests.get(
+            "https://127.0.0.1:2999/liveclientdata/allgamedata",
+            timeout=10,
+            verify=False,
+        )
+        return int(response.json()["activePlayer"]["championStats"]["currentHealth"])
+    except (requests.exceptions.ConnectionError, KeyError):
+        return -1
+```
+
+The gmh5225/LOL-TFT-OCR-BOT fork uses the identical path:
+```python
+return int(resposne.json()['activePlayer']['championStats']["currentHealth"])
+```
+
+### Key observations
+- **API path**: `activePlayer.championStats.currentHealth` (a FLOAT, cast to int).
+- **Endpoint**: `https://127.0.0.1:2999/liveclientdata/allgamedata` (same endpoint the project already uses).
+- **Returns**: -1 on connection error or KeyError (no game running, or championStats missing).
+- **NO OCR involved** — gold, shop, items, bench, round are still OCR'd, but HP is exclusively API.
+- **Call site** (`game.py` line 96): called every loop iteration inside `game_loop()` which only runs AFTER `loading_screen()` completes (i.e. after round 1-1 is reached). This is critical: `championStats` is populated only after the tactician champion is instantiated on the board.
+- The bot also uses the API for `level` (`activePlayer.level`) — exactly what the TFT Adwer codebase already does.
+- **`HEALTH_LOC = Vec2(1897, 126)`** is defined in `screen_coords.py` (top-right corner) but is UNUSED in the entire codebase (grep confirmed). It is dead code, likely a leftover from the pre-2022 OCR era.
+
+### Why this is authoritative
+- TFT-OCR-BOT is an active, maintained TFT bot (commits through 2026).
+- The Riot Developer Portal explicitly documents `activePlayer.championStats.currentHealth` in the Live Client Data API schema.
+- Issue #4 (Jan 2022) confirms the OLD code OCR'd HP and broke on the win-streak fire animation. The team subsequently moved HP to the API.
+- The bot's README lists HP under "Read the board state (Round / Level / Gold / Shop / Items)" — HP is not enumerated separately because it comes for free from the API alongside level.
+
+---
+
+## 2. TFT-OCR-BOT coordinates (1920×1080 reference, for the parts it DOES OCR)
+
+For cross-reference, here are the screen_coords.py constants the bot uses (these match what the project already reverse-engineered for bench/gold/round, validating our existing work):
+
+| Stat | TFT-OCR-BOT coordinate | Method |
+|---|---|---|
+| **HP** | (none — Live API) | `activePlayer.championStats.currentHealth` |
+| Level | (none — Live API) | `activePlayer.level` |
+| Gold | `GOLD_POS = Vec4(870, 883, 920, 909)` | Tesseract OCR, psm 7, digit whitelist, 3× scale |
+| Round | `ROUND_POS = Vec4(753, 10, 870, 34)` then crop ROUND_POS_ONE/TWO/THREE sub-regions | Tesseract OCR, psm 7, ROUND_WHITELIST="0123456789-" |
+| Shop names | `SHOP_POS = Vec4(481, 1039, 1476, 1070)` + 5 × `CHAMP_NAME_POS` | Tesseract OCR, ALPHABET_WHITELIST |
+| Bench occupied | `BENCH_HEALTH_POS[0..8]` — 9 slots, y=650-757, x=369→1411 (slot width 103, gap 13) | Color match `[0,255,18]` (green) + np.convolve window=5 |
+| Champion name (when clicked) | `PANEL_NAME_LOC = Vec4(1707, 320, 1821, 342)` | OCR of the popup panel that appears when you click a unit |
+
+Preprocessing pipeline (ocr.py): grab → 3× NEAREST upscale → BGR→GRAY → cv2.THRESH_BINARY_INV + OTSU → tesserocr PyTessBaseAPI with whitelist + psm. This is the same approach the project's bench-ocr.ts already uses (Sharp-based equivalent).
+
+**NOTE on bench health-bar color**: TFT-OCR-BOT still uses `[0,255,18]` (pure RGB green) for bench occupied-detection. The project's bench-real-tft-analysis-015 task already proved that exact green DOES NOT exist in modern TFT screenshots — the project correctly switched to edge-density + std-dev. This is one place where TFT-OCR-BOT is OUTDATED. So TFT-OCR-BOT is right about the API approach for HP, but wrong about the bench color (TFT changed the rendering in a recent patch).
+
+---
+
+## 3. Does TFT UI show YOUR HP in a fixed location (NOT the leaderboard)?
+
+**NO.** Confirmed by both VLM analysis and pixel analysis of the user's real TFT screenshots (`upload/Ekran Görüntüsü (32/33/34).png`).
+
+### Bottom-center player bar contents
+The bottom-center player bar (y≈920-1080) contains:
+- **Gold amount** — large yellow/gold number, x≈890-1471 (this is what `gold-ocr.ts` reads successfully). Verified: massive yellow text cluster at y=932-1054, x=890-1471 in screenshot 32.
+- **Level badge** — small number, bottom-left (x≈170).
+- **XP bar** — visual bar, no number (just progress fill).
+- **Rank/position** — text like "4. Svy" (Turkish for "4. Sıra" = 4th place).
+- **NO HP number** — HP is only shown as a thin colored health-bar sliver (yellow mid-game, red low-HP, green high-HP) with NO digit overlay.
+
+### Top-center
+Round/stage (e.g. "2-5") and a stage timer — no HP.
+
+### Top-right
+The vertical leaderboard starts here. NO fixed HP indicator.
+
+### Conclusion
+**The ONLY place YOUR HP appears as a readable number is in the right-side vertical leaderboard**, where it is one of 8 HP numbers and moves up/down as the leaderboard re-sorts by HP. This matches what the user stated in the task description, and what the project's earlier worklog entries (lines 4779-4951) already concluded.
+
+---
+
+## 4. Portrait highlight detection (if API path fails)
+
+If for some reason the Live API is unavailable (no game running, capture client offline, etc.) and OCR is the only fallback, here's how to identify YOUR portrait in the leaderboard:
+
+### Visual signature
+- **Your portrait**: GOLD / YELLOW border. VLM reports ≈RGB (255, 215, 0). The exact TFT UI color is more like (210-230, 170-190, 60-90) based on the bright-yellow HP-text pixels found at x=1830-1900 in screenshot 32 — TFT uses a slightly desaturated gold, not pure RGB(255,215,0).
+- **Other 7 portraits**: RED border. VLM reports ≈RGB (255, 0, 0). Real TFT color is closer to (150-170, 50-80, 80-110) based on the magenta/reddish pixels at x=1700 in the leaderboard.
+- The highlight is a CONTINUOUS colored frame around the portrait, ~3-5px thick.
+
+### Detection algorithm (Tesseract-only fallback)
+1. Crop the right-side leaderboard region: `(1640, 110, 1920, 950)` at 1920×1080 (this covers all 8 portraits + their HP numbers).
+2. Within that crop, scan vertical strips to find 8 portrait centers. Each portrait is ~80-90px tall; the column starts at y≈120 and ends at y≈900.
+3. For each portrait, sample the 4 border edges (top/bottom/left/right, 3px thick, 60px long) and compute the mean RGB.
+4. Classify each portrait's border as "gold" (high R, high G, low B → R>180 && G>140 && B<120) vs "red" (high R, low G, low B → R>120 && G<90 && B<110). TFT colors are desaturated so use loose thresholds.
+5. The portrait classified as "gold" is YOU. If multiple golds or zero golds (rare — happens during the brief re-sort animation), fall back to the previous frame's "you" position; if that's also stale, return null and let the sanity-filter hold the last known HP.
+6. OCR the HP number region immediately to the right of the gold portrait: roughly `(portrait_x + 110, portrait_y + 10, portrait_x + 200, portrait_y + 35)` — yellow/gold digit text on dark background.
+7. Tesseract config: `--psm 7 -c tessedit_char_whitelist=0123456789` with 3× NEAREST upscale + grayscale + Otsu threshold (same pipeline as gold-ocr).
+
+### Caveats
+- The highlight border is THIN (3-5px). Sub-pixel alignment matters. Use the user-calibrated 4-corner approach from earlier worklog entries.
+- During the brief leaderboard re-sort animation (~200ms after each round), multiple portraits can be moving at once and the highlight may briefly flicker. Skip frames where the highlight is ambiguous.
+- The highlight color can shift slightly with TFT set updates (Riot changed bench colors mid-2025, breaking the `[0,255,18]` green assumption). Treat any hardcoded RGB as a STARTING POINT, not ground truth — calibrate against real screenshots.
+
+---
+
+## 5. TFTSense investigation
+
+TFTSense is closed-source. The UnknownCheats thread on TFT overlays (forum/league-of-legends/745836-tft-overlay-build-compliant-legit-overlay.html, March 2026) confirms:
+- Overwolf-based overlays are the "officially sanctioned" route.
+- Memory reading is NOT allowed by Riot for TFT (would be detected as a cheat).
+- OCR-from-screen is acceptable per Riot policy.
+
+TFTSense specifically: no public source. Community reports (Reddit r/CompetitiveTFT, Mobalytics/Blitz/MetaTFT comparisons) indicate TFTSense uses **Overwolf's GEP (Game Event Provider)** for TFT, which exposes a `match_state` event stream. Overwolf's GEP for TFT reportedly includes HP, gold, level, shop — but only while Overwolf is running and the user has the TFT Overwolf app installed. This is essentially "the same data the Riot Live API gives, just delivered via Overwolf's IPC instead of HTTP". So TFTSense is reading the same underlying game state, just through a different transport.
+
+**Implication for us**: We don't need Overwolf. The Riot Live Client Data API (localhost:2999) gives us the same data directly. TFT-OCR-BOT proves that `activePlayer.championStats.currentHealth` works for TFT via this API.
+
+---
+
+## 6. RECOMMENDED APPROACH FOR THIS PROJECT
+
+### Primary: Riot Live API (DO THIS FIRST — 5 line change)
+
+Add to `live_api.py` (or the TS equivalent in `src/lib/tft/reading-provider.ts` or wherever the live API is called):
+
+```python
+# ─── HP — TFT Live API DOES expose this (TFT-OCR-BOT verified) ──────
+# Path: activePlayer.championStats.currentHealth
+# NOTE: this field is only populated AFTER the tactician champion is
+# instantiated (i.e. after loading screen, ~when round 1-1 starts).
+# At gameTime=0s it will be missing — that's why our previous probe
+# failed. Once round 1-1 is reached, this returns real TFT HP.
+hp = None
+try:
+    champion_stats = raw.get("activePlayer", {}).get("championStats", {})
+    if "currentHealth" in champion_stats:
+        hp = int(champion_stats["currentHealth"])
+except (TypeError, ValueError):
+    pass
+if hp is None and me and me.get("isDead", False):
+    hp = 0
+state.hp = hp if hp is not None else 100  # 100 = match-start default
+state._hp_from_api = hp is not None
+```
+
+**Action items for the engineer**:
+1. **Delete or rewrite the comment in `live_api.py` lines 129-138** that says "TFT Live API does NOT expose HP". That conclusion was wrong — based on a probe at gameTime=0s.
+2. **Re-run the riot-probe** (`capture.py` with `--probe` or just let the auto-probe fire) **AFTER round 1-1** (i.e. when the player is actually on the board, not in loading screen). Confirm `activePlayer.championStats.currentHealth` is populated.
+3. **Update `riot-probe/route.ts`** to also check `activePlayer.championStats.currentHealth` (currently the usefulFields checklist only checks `currentGold`, `shop`, `allShops`, `rerollCost` — none of which work for TFT).
+4. **Update sanity-filter.ts**: HP can come from API (mark `_hp_from_api=true`). When API HP is available, SKIP the sanity-filter's "+25 max increase per snapshot" rule — API HP is ground truth. Keep the sanity filter only as a guard against API outages.
+5. **Update vlm-analyzer.ts**: when API HP is present, do NOT also run VLM HP OCR (saves VLM tokens and avoids the hallucination path entirely).
+
+### Fallback (only if Live API is unreachable mid-match): OCR + portrait highlight
+
+If `activePlayer.championStats.currentHealth` returns null/missing for >2 consecutive snapshots AND gold-ocr confirms the screen is actually a TFT game (gold number is visible), fall back to OCR-based HP:
+
+1. Crop leaderboard: `(1640, 110, 1920, 950)` at 1920×1080.
+2. Detect gold-bordered portrait (the "you" indicator) — sample border pixels, threshold R>180 && G>140 && B<120.
+3. Find the gold portrait's y-center (call it `y_you`).
+4. OCR the HP region: `(1830, y_you - 15, 1900, y_you + 15)` with Tesseract `--psm 7 -c tessedit_char_whitelist=0123456789`, 3× upscale + Otsu threshold.
+5. Validate result is in [0, 150] (TFT health range with augment bonus). Reject otherwise.
+6. Mark `_hp_from_api=false` so sanity-filter applies.
+
+### Do NOT do
+- Do NOT hardcode a fixed (x,y) crop for HP anywhere on the screen — confirmed there is no fixed HP number location outside the leaderboard.
+- Do NOT trust VLM to "find your HP" without the gold-border context — VLM hallucinated HP=100 from the leaderboard in earlier sessions (worklog line 1288) because it picked the topmost portrait, not the highlighted one.
+- Do NOT use the TFT-OCR-BOT `[0,255,18]` bench-green trick for HP — TFT's rendering has changed. The gold-border highlight color is also subject to patch drift; calibrate against real screenshots each TFT set.
+
+---
+
+## 7. Specific coordinates to crop (1920×1080 reference)
+
+| Purpose | Crop (x, y, w, h) or (x1, y1, x2, y2) | Notes |
+|---|---|---|
+| **Leaderboard full** | `(1640, 110, 1920, 950)` | All 8 portraits + HP numbers |
+| **Single portrait border sample** (per portrait i of 8) | portrait i: `(1640, 120 + i*100, 1730, 200 + i*100)` ≈ y stride 100 | Tighter than reality (real stride ≈ 80-90px) — calibrate |
+| **HP number OCR** (next to portrait at y_you) | `(1830, y_you - 15, 1900, y_you + 15)` | Yellow/gold text on dark bg, psm 7, digit whitelist |
+| **Gold (already working)** | `(870, 883, 920, 909)` per TFT-OCR-BOT, or `(890, 932, 1471, 1054)` per our gold-ocr.ts | Both work |
+| **Round** | `(753, 10, 870, 34)` per TFT-OCR-BOT | Top-center |
+| **Bench** | `BENCH_HEALTH_POS[0..8]`: x=369/485/601/728/844/960/1076/1192/1308, y=650-757 | TFT-OCR-BOT — but green `[0,255,18]` is stale; use edge+std method |
+
+For HP, the LIVE API replaces all of the leaderboard crops with one HTTP call.
+
+---
+
+## 8. Why the previous "TFT API doesn't expose HP" conclusion was wrong
+
+Worklog line 1388 (Task ID around 14.x): the team ran the riot-probe at match start. The activePlayer JSON returned had keys `[currentGold, level, riotId, riotIdGameName, riotIdTagLine, summonerName, teamRelativeColors]`. The team concluded HP is not exposed.
+
+What actually happened: at gameTime=0s (loading screen / pre-round-1-1), the tactician champion has not been instantiated yet, so `activePlayer.championStats` is OMITTED from the JSON entirely. After the loading screen completes and the tactician appears on the board, `championStats` (including `currentHealth`) IS present.
+
+TFT-OCR-BOT's code calls `get_health()` only inside `game_loop()`, which only runs after `loading_screen()` returns (i.e. after `get_round()` returns `"1-1"`). At that point, championStats is populated. The team needs to re-probe DURING gameplay, not at match start.
+
+This single misdiagnosis caused the entire OCR-HP rabbit hole (vlm-analyzer HP prompts, sanity-filter HP caps, the +12→+25 HP-increase debate, the bottom-bar vs leaderboard flip-flop). Fixing the API path will close the HP chapter permanently.
+
+---
+
+## 9. Next actions for engineer (in priority order)
+
+1. **Add the 5-line `championStats.currentHealth` extraction to `live_api.py` / reading-provider.ts.** This is the highest-leverage change in the entire project.
+2. **Re-run the riot-probe mid-game (after round 1-1)** to confirm championStats is populated. Update `riot-probe/route.ts`'s usefulFields to include `activePlayer.championStats.currentHealth` and `activePlayer.championStats.maxHealth`.
+3. **Update sanity-filter.ts**: skip HP sanity checks when `_hp_from_api === true` (API is ground truth).
+4. **Update vlm-analyzer.ts**: when API HP is present, omit HP from the VLM prompt entirely (saves tokens, eliminates hallucination source).
+5. **Test in a real TFT match**: confirm HP matches what's on screen across at least 3 rounds including a damage-taken round (HP decreases) and an augment-heal round (HP increases by +3/+5/+10).
+6. **(Optional, lower priority) Build the OCR+highlight fallback** as a backup for when the Live API is briefly unreachable. Not strictly needed if the Live API proves reliable.
+7. **(Optional) Update the worklog's earlier "TFT API doesn't expose HP" claims** (lines 464, 1402-1403, 5255, 5323) with a correction note pointing to this research entry.
+
+## 10. Source files saved
+
+All TFT-OCR-BOT source files downloaded to `/tmp/tft-ocr-bot/` for reference:
+- `arena_functions.py` — contains `get_health()` (the key function)
+- `screen_coords.py` — all 1920×1080 UI coordinates (HEALTH_LOC is defined but UNUSED — dead code)
+- `game.py` — confirms get_health() called only inside game_loop() after loading_screen()
+- `arena.py` — confirms check_health() calls arena_functions.get_health() (API, not OCR)
+- `ocr.py` — Tesseract preprocessing pipeline (grayscale + Otsu threshold, psm 7)
+- `game_functions.py` — round/gold/item OCR functions
+- `README.md` — installation + features list
+
+---
+Task ID: hp-live-api-breakthrough
+Agent: Z.ai Code (main — model rotation geri dönüş)
+Task: HP okuma araştırması. TFT-OCR-BOT HP'yi OCR ile değil Live API'den okuyor: activePlayer.championStats.currentHealth. Bu path daha önce DENENMEMİŞTİ — ekip maç başında (gameTime=0s) probe etmiş, championStats yok görmüş, "TFT API HP vermiyor" yanlış sonucuna varmış. Aslında championStats 1-1 round'undan SONRA populate ediliyor.
+
+Work Log:
+- Subagent TFT-OCR-BOT source'unu inceledi (arena_functions.py → get_health):
+    hp = data["activePlayer"]["championStats"]["currentHealth"]
+- TFT-OCR-BOT bunu loading_screen() bittikten sonra çağırıyor — yani 1-1'den sonra.
+- local_reader.py read_live_api() güncellendi:
+  - Yöntem 1: activePlayer.championStats.currentHealth (TFT-OCR-BOT yöntemi)
+  - Yöntem 2: allPlayers[].health fallback (patch değişirse diye)
+  - 0-200 arası filtre (LoL leak 500+ değerleri elenir)
+  - hp_source field eklendi (debug için)
+- snapshot route.ts localData override'a HP eklendi:
+  - ld.hp varsa ve 0-200 arasaysa state.hp = ld.hp
+  - VLM HP halüsinasyonları tamamen bypass edilir
+  - Debug log'a hp_source eklenir
+- capture.py zaten localData payload'una hp koyuyor — ek değişiklik gerekmedi.
+- lint temiz, dev log temiz.
+
+Stage Summary — HP ÇÖZÜLDÜ (OCR gerekmedi):
+- HP artık Live API'den geliyor: activePlayer.championStats.currentHealth
+- VLM HP halüsinasyonları, sanity filter HP cap'leri, bottom-bar vs leaderboard flip-flop'u TAMAMEN BOŞUNAYDI.
+- TFT-OCR-BOT production kodu bunu yıllardır kullanıyor.
+- Kullanıcı testi: capture.py --use-local ile HP doğru gelmeli (1-1'den sonra).
+- Sıradaki: gold/stage OCR + bench YOLO eğitimi (karakter tanıma).

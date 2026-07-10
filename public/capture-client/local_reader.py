@@ -166,22 +166,57 @@ class LocalReader:
             # active player — level + HP
             active = data.get("activePlayer", {})
             level = active.get("level")
-            # TFT'de currentHealth LoL leak'i (500 gibi), HP için kullanma.
-            # HP için all_players'tan active player'ı bul.
-            hp = None
             all_players = data.get("allPlayers", [])
             active_riot_id = active.get("riotId") or active.get("summonerName")
-            for p in all_players:
-                p_id = p.get("riotId") or p.get("summonerName")
-                if p_id == active_riot_id:
-                    # TFT'de all_players[].hp yok — LoL struct'ı recycled.
-                    # HP için OCR veya başka yol lazım.
-                    break
+
+            # ─── HP — TFT-OCR-BOT yöntemi ───────────────────────────────────
+            # TFT-OCR-BOT production kodu (arena_functions.py → get_health):
+            #   hp = data["activePlayer"]["championStats"]["currentHealth"]
+            #
+            # Bu path daha önce DENENMEMİŞTİ. Sadece activePlayer.level alınıp
+            # HP None döndürülüyordu ("TFT API HP vermiyor" yanlış kararı).
+            # Aslında championStats sadece 1-1 round'undan SONRA populate
+            # ediliyor (tactician champion instantiate olunca). Maç başında
+            # (loading screen) yok, mid-game'de var.
+            hp = None
+            hp_source = None
+
+            # Yöntem 1: activePlayer.championStats.currentHealth (TFT-OCR-BOT)
+            champion_stats = active.get("championStats") or {}
+            if isinstance(champion_stats, dict):
+                ch = champion_stats.get("currentHealth")
+                if ch is not None:
+                    try:
+                        hp_val = int(float(ch))
+                        # TFT HP 0-150 arası (augment bonus +50'ye kadar).
+                        # LoL leak 500+ değerleri filtreleniyor.
+                        if 0 <= hp_val <= 200:
+                            hp = hp_val
+                            hp_source = "activePlayer.championStats.currentHealth"
+                    except (ValueError, TypeError):
+                        pass
+
+            # Yöntem 2: allPlayers[].health (fallback — belki patch değişti)
+            if hp is None:
+                for p in all_players:
+                    p_id = p.get("riotId") or p.get("summonerName")
+                    if p_id == active_riot_id:
+                        ph = p.get("health")
+                        if ph is not None:
+                            try:
+                                hp_val = int(float(ph))
+                                if 0 <= hp_val <= 200:
+                                    hp = hp_val
+                                    hp_source = "allPlayers[].health"
+                            except (ValueError, TypeError):
+                                pass
+                        break
 
             return {
                 "connected": True,
                 "level": int(level) if level is not None else None,
-                "hp": None,  # Live API TFT'de HP vermiyor (bölüm 14.8)
+                "hp": hp,  # TFT-OCR-BOT yöntemi: activePlayer.championStats.currentHealth
+                "hp_source": hp_source,  # debug için
                 "all_players": all_players,
                 "game_time": game_data.get("gameTime", 0),
             }

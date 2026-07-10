@@ -37,17 +37,19 @@ interface SnapshotRequestBody {
    * Local data from capture.py --use-local:
    *   - level: Live API (port 2999) → %100 doğru, VLM'i bypass eder
    *   - gold: Tesseract OCR → VLM'e göre daha güvenilir (körü körüne 500 demez)
-   *   - hp: Live API TFT'de vermiyor, VLM'den gelecek
+   *   - hp: Live API TFT-OCR-BOT yöntemi → activePlayer.championStats.currentHealth
+   *     (1-1 round'undan SONRA populate edilir, loading screen'de yok)
    *   - connected: Live API "TFT" mode tespiti
    *
-   * Eğer localData varsa, VLM sonucundaki level/gold YERİNE localData kullanılır.
-   * VLM yine de çağrılır (stage/hp/shop/board için) ama level/gold localData'dan alınır.
+   * Eğer localData varsa, VLM sonucundaki level/gold/hp YERİNE localData kullanılır.
+   * VLM yine de çağrılır (stage/shop/board için) ama level/gold/hp localData'dan alınır.
    */
   localData?: {
     connected: boolean;
     level: number | null;
     hp: number | null;
     gold: number | null;
+    hp_source?: string | null; // debug: HP hangi path'ten geldi
     all_players?: unknown[];
     game_time?: number;
   };
@@ -213,6 +215,15 @@ export async function POST(req: NextRequest) {
           if (state.gold !== ld.gold) {
             overrides.push(`gold ${state.gold}→${ld.gold}`);
             state.gold = ld.gold;
+          }
+        }
+        // HP — TFT-OCR-BOT yöntemi: activePlayer.championStats.currentHealth
+        // (1-1 round'undan sonra populate edilir). VLM halüsinasyonları yerine
+        // Live API HP'si kullanılır. 0-200 arası geçerli (augment bonus +50'ye kadar).
+        if (typeof ld.hp === "number" && ld.hp >= 0 && ld.hp <= 200) {
+          if (state.hp !== ld.hp) {
+            overrides.push(`hp ${state.hp}→${ld.hp}${ld.hp_source ? ` (${ld.hp_source})` : ""}`);
+            state.hp = ld.hp;
           }
         }
         if (overrides.length > 0) {
