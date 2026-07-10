@@ -62,3 +62,6 @@ debug-bench/
 # Prisma SQLite database
 db/*.db
 db/*.db-journal
+# Python cache
+__pycache__/
+*.pyc
