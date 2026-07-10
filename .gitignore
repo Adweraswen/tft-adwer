@@ -65,3 +65,4 @@ db/*.db-journal
 # Python cache
 __pycache__/
 *.pyc
+test-photos/

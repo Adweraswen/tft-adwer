@@ -181,39 +181,67 @@ async function computeLumStats(pngBuf: Buffer, region: { left: number; top: numb
   };
 }
 
-// ─── Fixed-slot mode ──────────────────────────────────────────────────────
+// ─── Fixed-slot mode (optimized) ──────────────────────────────────────────
+// PERFORMANCE: slot stats (lumStats + cropB64) bir kere hesaplanır,
+// 4 occupancy variant aynı stats'ı paylaşır. Önceki: 576 sharp extract,
+// şimdi: 72 extract (8 combo × 9 slot).
 
-async function runFixedMode(
+interface SlotCache {
+  index: number;
+  bbox: [number, number, number, number];
+  stdDev: number;
+  brightRatio: number;
+  meanLum: number;
+  cropB64: string;
+}
+
+async function computeSlotCache(
   pngBuf: Buffer,
   imgW: number,
   imgH: number,
   coordSet: BenchCoordSet,
-  yTop: number,
-  yLabel: string,
-  variant: OccupancyVariant
-): Promise<BenchFixedResult> {
-  const slots: BenchSlotResult[] = [];
-  const occupiedIndices: number[] = [];
+  yTop: number
+): Promise<SlotCache[]> {
   const centers = benchSlotCenters(coordSet);
-
+  const caches: SlotCache[] = [];
   for (let i = 0; i < 9; i++) {
     const bbox1080 = benchSlotBbox(centers[i], yTop, coordSet.slotWidth);
     const region = scaleBbox(bbox1080, imgW, imgH);
     const stats = await computeLumStats(pngBuf, region);
-    const occupied = stats.std >= variant.stdThreshold && stats.brightRatio >= variant.brightMinRatio;
     const cropPng = await cropRegion(pngBuf, region);
-    slots.push({
+    caches.push({
       index: i,
       bbox: bbox1080,
-      occupied,
       stdDev: stats.std,
       brightRatio: stats.brightRatio,
       meanLum: stats.mean,
       cropB64: `data:image/png;base64,${cropPng.toString("base64")}`,
     });
-    if (occupied) occupiedIndices.push(i);
   }
+  return caches;
+}
 
+function buildFixedResult(
+  cache: SlotCache[],
+  coordSet: BenchCoordSet,
+  yLabel: string,
+  variant: OccupancyVariant
+): BenchFixedResult {
+  const slots: BenchSlotResult[] = [];
+  const occupiedIndices: number[] = [];
+  for (const c of cache) {
+    const occupied = c.stdDev >= variant.stdThreshold && c.brightRatio >= variant.brightMinRatio;
+    slots.push({
+      index: c.index,
+      bbox: c.bbox,
+      occupied,
+      stdDev: c.stdDev,
+      brightRatio: c.brightRatio,
+      meanLum: c.meanLum,
+      cropB64: c.cropB64,
+    });
+    if (occupied) occupiedIndices.push(c.index);
+  }
   return {
     variantName: variant.name,
     coordSet: `${coordSet.name}/${yLabel}`,
@@ -225,16 +253,21 @@ async function runFixedMode(
   };
 }
 
-// ─── Auto-detect mode ─────────────────────────────────────────────────────
-// Scan bench band. For each column, compute std-dev of luminance vertically.
-// High-std columns = part of an occupied slot. Cluster them.
+// ─── Auto-detect mode (optimized) ─────────────────────────────────────────
+// PERFORMANCE: band bir kere extract edilir, colStd bir kere hesaplanır,
+// 4 variant aynı colStd'yi paylaşır. Önceki: 4× band extract, şimdi: 1×.
 
-async function runAutoMode(
+interface AutoBandCache {
+  bandLeft: number;
+  bandWidth: number;
+  colStd: Float64Array;
+}
+
+async function computeAutoBandCache(
   pngBuf: Buffer,
   imgW: number,
-  imgH: number,
-  variant: OccupancyVariant
-): Promise<BenchAutoResult> {
+  imgH: number
+): Promise<AutoBandCache> {
   const bandTop = Math.round(770 * (imgH / 1080));
   const bandHeight = Math.max(1, Math.round(75 * (imgH / 1080)));
   const bandLeft = Math.round(480 * (imgW / 1920));
@@ -247,7 +280,6 @@ async function runAutoMode(
     .toBuffer();
 
   const channels = 4;
-  // For each column, compute std-dev of luminance.
   const colStd = new Float64Array(bandWidth);
   for (let x = 0; x < bandWidth; x++) {
     let sum = 0;
@@ -265,14 +297,21 @@ async function runAutoMode(
     }
     colStd[x] = Math.sqrt(varSum / bandHeight);
   }
+  return { bandLeft, bandWidth, colStd };
+}
 
-  // Cluster adjacent columns with std > threshold.
-  const MIN_WIDTH = 8; // wider than green mode — portraits are bigger than HP bars.
+function buildAutoResult(
+  cache: AutoBandCache,
+  imgW: number,
+  variant: OccupancyVariant
+): BenchAutoResult {
+  const { bandLeft, bandWidth, colStd } = cache;
+  const MIN_WIDTH = 8;
   const clusters: BenchAutoCluster[] = [];
   let clusterStart = -1;
   let clusterStdSum = 0;
   for (let x = 0; x <= bandWidth; x++) {
-    const hasContent = x < bandWidth && colStd[x] > variant.stdThreshold * 0.7; // slightly relaxed
+    const hasContent = x < bandWidth && colStd[x] > variant.stdThreshold * 0.7;
     if (hasContent && clusterStart === -1) {
       clusterStart = x;
       clusterStdSum = colStd[x];
@@ -282,8 +321,6 @@ async function runAutoMode(
       const width = x - clusterStart;
       if (width >= MIN_WIDTH) {
         const centerXImg = bandLeft + clusterStart + Math.floor(width / 2);
-        // Auto mod: koordinat bağımsız. mappedSlotIndex hesabı için en iyi
-        // koordinat setini (A) kullan, ama eşleşme olmazsa null bırak.
         const centers1080 = benchSlotCenters(BENCH_COORD_SETS[0]);
         const scaleX = imgW / 1920;
         let nearest: number | null = null;
@@ -307,7 +344,6 @@ async function runAutoMode(
       clusterStdSum = 0;
     }
   }
-
   return {
     variantName: variant.name,
     clusters,
@@ -338,18 +374,26 @@ export async function runBenchOcrSweep(fullImage: Buffer): Promise<BenchOcrResul
 
   const pngBuf = await sharp(fullImage).png().toBuffer();
 
+  // ── CACHE: slot stats bir kere hesapla, 4 variant paylaş ──
+  // 8 combo (4 coordSet × 2 y-range) × 9 slot = 72 sharp extract (önceki: 576).
+  const slotCaches: { yLabel: string; coordSet: BenchCoordSet; cache: SlotCache[] }[] = [];
+  for (const cs of BENCH_COORD_SETS) {
+    slotCaches.push({ yLabel: "wide", coordSet: cs, cache: await computeSlotCache(pngBuf, imgW, imgH, cs, BENCH_Y_TOP) });
+    slotCaches.push({ yLabel: "short", coordSet: cs, cache: await computeSlotCache(pngBuf, imgW, imgH, cs, BENCH_Y_TOP_SHORT) });
+  }
+  // Auto band cache: bir kere extract et, 4 variant paylaş.
+  const autoBandCache = await computeAutoBandCache(pngBuf, imgW, imgH);
+
   const variants: BenchVariantResult[] = [];
   const counts: number[] = [];
 
   for (const ov of OCCUPANCY_VARIANTS) {
     try {
-      // Her koordinat seti × 2 y-range (wide/short) = 8 fixed result
-      const fixed: BenchFixedResult[] = [];
-      for (const cs of BENCH_COORD_SETS) {
-        fixed.push(await runFixedMode(pngBuf, imgW, imgH, cs, BENCH_Y_TOP, "wide", ov));
-        fixed.push(await runFixedMode(pngBuf, imgW, imgH, cs, BENCH_Y_TOP_SHORT, "short", ov));
-      }
-      const auto = await runAutoMode(pngBuf, imgW, imgH, ov);
+      // 8 fixed result — cache'den build et (sadece threshold karşılaştırması).
+      const fixed: BenchFixedResult[] = slotCaches.map((sc) =>
+        buildFixedResult(sc.cache, sc.coordSet, sc.yLabel, ov)
+      );
+      const auto = buildAutoResult(autoBandCache, imgW, ov);
 
       variants.push({
         occupancyVariant: ov.name,

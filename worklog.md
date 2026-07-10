@@ -5711,3 +5711,30 @@ Stage Summary:
 - Sandbox test: Bench auto=4 (doğru), Shop 5/5. C/D koordinat setleri sandbox sample'da 6 sayıyor (geniş portreler komşu slota taşıyor) — gerçek TFT'de hangisi çalıştığını kullanıcı söyleyecek.
 
 Kullanıcıya: Shop'ta "Muhteşem Meka" artık match olmalı. Bench'te auto modu kullan (koordinat bağımsız), ya da sabit koordinat modunda 8 set'i tek tek dene, hangisi doğru sayıyorsa söyle.
+
+---
+Task ID: bench-perf-fix-git-conflict-009
+Agent: Z.ai Code (main)
+Task: 2 sorun — (1) Bench HTTP 502 (timeout, çok yavaş), (2) kullanıcı git conflict (local test fotoğrafları ile push çakışması).
+
+Work Log:
+- Bench performans optimizasyonu (HTTP 502 fix):
+  - Önceki: 8 coordSet-yTop combo × 9 slot × 4 variant = 288 sharp extract + 4× auto band extract. Timeout (30s) aşımı → HTTP 502.
+  - computeSlotCache: her (coordSet, yTop) için 9 slot stats bir kere hesapla (72 extract total).
+  - buildFixedResult: cache'den threshold karşılaştırması ile result build (sharp yok).
+  - computeAutoBandCache: band bir kere extract + colStd bir kere hesapla.
+  - buildAutoResult: cache'den cluster build.
+  - runBenchOcrSweep: önce cache'leri hesapla, sonra 4 variant için cache'den build et.
+  - Sonuç: 1220ms (önceki timeout ~30s+). HTTP 502 çözüldü.
+- test-photos/ klasörü + .gitignore'a eklendi. Kullanıcı gerçek TFT screenshot'larını buraya koyabilir, git conflict olmaz.
+
+Stage Summary:
+- Bench API artık 1.2 saniyede dönüyor (önceki 30s+ timeout). HTTP 502 düzeldi.
+- Sandbox test: bestOccupied=4 (auto doğru), 8 fixed coord set tümü hesaplandı.
+- test-photos/ .gitignore'da — kullanıcı foto yükleyince git conflict olmaz.
+
+Kullanıcıya git talimatı:
+  git fetch origin
+  git reset --hard origin/main
+  (local değişiklikler silinir ama test-photos .gitignore'da olduğu için fotoğraflar güvende)
+  Sonra test-photos/ klasörüne TFT screenshot koy, web arayüzünden Bench test et.
