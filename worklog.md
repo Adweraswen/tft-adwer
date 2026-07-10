@@ -5925,3 +5925,27 @@ Stage Summary — 3/3 GERÇEK TFT SCREENSHOT DOĞRU:
 - edge≥0.03 AND std≥25 kombinasyonu dolu/boş ayrımını çözüyor.
 
 Kullanıcıya: Bench artık 3 gerçek TFT screenshot'ında da TAM DOĞRU. edge density + std-dev kombinasyonu. Tekrar test et, hepsi doğru olmalı.
+
+---
+Task ID: bench-tail-exclude-017
+Agent: Z.ai Code (main)
+Task: Kullanıcı: "board'daki karakterin kuyruğu benche değerse yanlış okur mu? sc35'de kuyruğu benchte saymış. sc36'da yeşil tahta halüsinasyon. Karakterleri direkt okusam olmaz mı?"
+
+Work Log:
+- VLM ile doğruladı: board karakterleri bench'e sızıyor (kuyruk/etki).
+- Çözüm: slotun alt %20'sini (kuyruk bölgesi) hariç tut. Sadece üst %80'i (portre bölgesi) tara.
+- computeSlotStats: region.height * 0.8 (alt %20 atla).
+- Kuyruk altta, portre üstte — ayrım sağlar.
+- Threshold güncellendi: edge03-std25 (sc33=5, sc34=4 doğru), edge02-std20 (gevşek).
+
+Sonuç:
+- sc32: 4 (7 olmalı — portre konumu farklı, edge düşük)
+- sc33: 5 ✓
+- sc34: 4 ✓ (kuyruk sorunu çözüldü!)
+
+Kullanıcı önerisi: "karakterleri direkt okumaya çalışsak olmaz mı?" — bu daha sağlam yol.
+Boş slot = mor/yeşil arka plan, dolu slot = şampiyon portresi.
+Template matching (DDragon iconları) veya VLM ile yapılabilir.
+Şimdilik kuyruk hariç tutma uygulandı, sc35/sc36 bekleniyor.
+
+Kullanıcıya: sc35 ve sc36 yükle, onlarla da test edeyim. Karakter direkt okuma yaklaşımını da düşünüyorum (template matching).

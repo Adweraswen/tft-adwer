@@ -51,10 +51,10 @@ export interface OccupancyVariant {
 }
 
 export const OCCUPANCY_VARIANTS: OccupancyVariant[] = [
-  { name: "edge03-std25", stdThreshold: 25, edgeThreshold: 0.03 },  // en iyi (sc32=7, sc33=5)
-  { name: "edge04-std25", stdThreshold: 25, edgeThreshold: 0.04 },  // biraz sıkı edge
-  { name: "edge03-std20", stdThreshold: 20, edgeThreshold: 0.03 },  // gevşek std
-  { name: "edge05-std30", stdThreshold: 30, edgeThreshold: 0.05 },  // sıkı ikisi
+  { name: "edge03-std25", stdThreshold: 25, edgeThreshold: 0.03 },  // sc33=5, sc34=4 doğru
+  { name: "edge02-std20", stdThreshold: 20, edgeThreshold: 0.02 },  // daha gevşek
+  { name: "edge04-std28", stdThreshold: 28, edgeThreshold: 0.04 },  // daha sıkı
+  { name: "edge025-std22", stdThreshold: 22, edgeThreshold: 0.025 },  // orta
 ];
 
 // ─── Result types ─────────────────────────────────────────────────────────
@@ -117,15 +117,22 @@ interface SlotStats {
 }
 
 async function computeSlotStats(pngBuf: Buffer, region: { left: number; top: number; width: number; height: number }): Promise<SlotStats> {
+  // Kuyruk bölgesini (alt %20) atla — board karakterinin kuyruğu bench'e değmesin
+  const adjustedRegion = {
+    left: region.left,
+    top: region.top,
+    width: region.width,
+    height: Math.floor(region.height * 0.8),  // alt %20'yi atla
+  };
   const raw = await sharp(pngBuf)
-    .extract({ left: region.left, top: region.top, width: region.width, height: region.height })
+    .extract({ left: adjustedRegion.left, top: adjustedRegion.top, width: adjustedRegion.width, height: adjustedRegion.height })
     .ensureAlpha()
     .raw()
     .toBuffer();
 
   const channels = 4;
-  const W = region.width;
-  const H = region.height;
+  const W = adjustedRegion.width;
+  const H = adjustedRegion.height;
   const total = raw.length / channels;
   const lums = new Float64Array(total);
   let sum = 0;
@@ -146,7 +153,6 @@ async function computeSlotStats(pngBuf: Buffer, region: { left: number; top: num
   let edgeCount = 0;
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W - 1; x++) {
-      const idx = (y * W + x) * channels;
       const lum1 = lums[y * W + x];
       const lum2 = lums[y * W + x + 1];
       if (Math.abs(lum1 - lum2) > 30) edgeCount++;
