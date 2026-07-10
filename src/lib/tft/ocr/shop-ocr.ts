@@ -33,13 +33,13 @@ import { CHAMPIONS } from "@/lib/tft-data";
 
 // ─── Shop card coordinates (1920x1080 reference) ───────────────────────────
 // TFT-OCR-BOT shop text band: (481, 1039, 1476, 1070). 5 cards, each ~199px wide.
-// REVISED (2026-07-10 user feedback): gold cost number on the LEFT of each card
-// was leaking into the OCR ("d"/"a" confusion). New: NARROW the card text region
-// — skip the leftmost ~30px (where the gold number sits) and rightmost ~10px.
+// REVISED (2026-07-10 user feedback v2): gold cost number is on the RIGHT of each
+// card (not left as I first assumed). NARROW the card text region — skip the
+// rightmost ~32px (where the gold number sits) and leftmost ~10px.
 export const SHOP_BAND: [number, number, number, number] = [481, 1039, 1476, 1070];
 const SHOP_CARD_WIDTH_1080 = 199; // (1476-481)/5 ≈ 199
-const SHOP_TEXT_LEFT_PAD = 32;   // skip gold cost number on the left
-const SHOP_TEXT_RIGHT_PAD = 10;
+const SHOP_TEXT_LEFT_PAD = 10;   // small left padding
+const SHOP_TEXT_RIGHT_PAD = 32;  // skip gold cost number on the right
 
 function shopCardBboxes(): [number, number, number, number][] {
   const bboxes: [number, number, number, number][] = [];

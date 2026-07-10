@@ -5666,3 +5666,19 @@ Stage Summary — 3 düzeltme + kilitler TAMAM:
 Sandbox test: Bench 4→4, Shop 5/5 (Pantheon/Talon/Corki/Graves/Nami %100), Shop seed=7 5/5 (Nunu&Willump %86 partial).
 
 Kullanıcıya: Bench'i tekrar test et — genişletilmiş bbox dolu slotları daha iyi yakalamalı. Shop'ta "d"/"a" karışması azalmalı, uzun isimler partial match ile gelebilir.
+
+---
+Task ID: fix-bench-crash-shop-direction-007
+Agent: Z.ai Code (main)
+Task: 2 hata düzeltme — (1) BenchOcrTester crash "Cannot read properties of undefined (reading 'stdThreshold')" çünkü UI eski fixedPrimary/fixedAlt kullanıyordu ama backend artık fixedWidePrimary/fixedWideAlt/fixedShortPrimary döndürüyor. (2) Shop kırpma yönü ters — soldan değil sağdan kırpılacak (gold cost number sağda).
+
+Work Log:
+- src/components/tft/bench-ocr-tester.tsx: BenchVariantResult interface güncellendi (fixedPrimary/fixedAlt → fixedWidePrimary/fixedWideAlt/fixedShortPrimary). mode state type güncellendi ("fixed-primary"/"fixed-alt" → "wide-primary"/"wide-alt"/"short-primary"). Mod seçici butonları 4 mod (geniş/geniş+8px/kısa/auto) + doğru etiketler (y=720/y=770). Fixed render bloğu IIFE ile yeniden yazıldı — `const fixed = mode===... ? activeV.fixedWidePrimary : ...` ile doğru result seçilir, sonra tüm referanslar `fixed.stdThreshold`/`fixed.slots` kullanır. Crash çözüldü.
+- src/lib/tft/ocr/shop-ocr.ts: SHOP_TEXT_LEFT_PAD 32→10, SHOP_TEXT_RIGHT_PAD 10→32. Yorum güncellendi: gold cost number SAĞDA (solda değil). Kart adı bölgesi artık soldan 10px, sağdan 32px kırpar — gold sayısı dışarıda kalır.
+- src/app/api/shop-ocr-sample/route.ts: cost indicator top-LEFT → top-RIGHT (text-anchor=end, x2-6). Sample ile gerçek TFT layout senkron.
+
+Stage Summary — 2 düzeltme TAMAM:
+- Bench crash çözüldü: agent-browser ile test, stdThreshold=30 OK, no console errors, UI render oluyor.
+- Shop sağ kırpma: 5/5 match korunuyor (Pantheon/Talon/Corki/Graves/Nami %100). Gerçek TFT'de "d"/"a" karışması azalmalı (gold number artık crop dışında).
+
+Kullanıcıya: Bench'i tekrar dene (crash yok artık), Shop'ta gold karışması azalmalı.

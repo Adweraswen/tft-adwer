@@ -55,8 +55,9 @@ interface BenchAutoResult {
 
 interface BenchVariantResult {
   occupancyVariant: string;
-  fixedPrimary: BenchFixedResult;
-  fixedAlt: BenchFixedResult;
+  fixedWidePrimary: BenchFixedResult;
+  fixedWideAlt: BenchFixedResult;
+  fixedShortPrimary: BenchFixedResult;
   auto: BenchAutoResult;
   error: string | null;
 }
@@ -80,7 +81,7 @@ export function BenchOcrTester() {
   const [locked, setLocked] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [activeVariant, setActiveVariant] = useState(0);
-  const [mode, setMode] = useState<"fixed-primary" | "fixed-alt" | "auto">("fixed-primary");
+  const [mode, setMode] = useState<"wide-primary" | "wide-alt" | "short-primary" | "auto">("wide-primary");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const runTest = useCallback(async (file: File | null) => {
@@ -276,8 +277,9 @@ export function BenchOcrTester() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] uppercase tracking-wide text-zinc-600">mod:</span>
               {([
-                { id: "fixed-primary", label: "sabit koordinat" },
-                { id: "fixed-alt", label: "sabit (+8px)" },
+                { id: "wide-primary", label: "geniş (y=720)" },
+                { id: "wide-alt", label: "geniş (+8px)" },
+                { id: "short-primary", label: "kısa (y=770)" },
                 { id: "auto", label: "auto-detect" },
               ] as const).map((m) => (
                 <button
@@ -302,48 +304,58 @@ export function BenchOcrTester() {
             )}
 
             {/* Fixed mode: 9-slot grid */}
-            {activeV && !activeV.error && (mode === "fixed-primary" || mode === "fixed-alt") && (
+            {activeV && !activeV.error && (mode === "wide-primary" || mode === "wide-alt" || mode === "short-primary") && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] text-zinc-400">
-                    Mod: <span className="text-zinc-200">{mode === "fixed-primary" ? "sabit koordinat" : "sabit (+8px)"}</span>
-                    <span className="text-zinc-600 ml-2">· std≥<span className="text-zinc-300 tabular-nums">{(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).stdThreshold}</span> & bright≥<span className="text-zinc-300 tabular-nums">{((mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).brightMinRatio * 100).toFixed(0)}%</span></span>
-                  </div>
-                  <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-[10px] tabular-nums">
-                    {(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).occupiedCount}/9 dolu
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-9 gap-1.5">
-                  {(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).slots.map((slot) => (
-                    <div
-                      key={slot.index}
-                      className={`rounded-md border overflow-hidden flex flex-col ${
-                        slot.occupied
-                          ? "border-emerald-500/50 bg-emerald-500/[0.08]"
-                          : "border-zinc-800 bg-zinc-900/40"
-                      }`}
-                    >
-                      <div className="px-1 py-0.5 border-b border-zinc-800/80 flex items-center justify-between">
-                        <span className="text-[8px] text-zinc-600">#{slot.index + 1}</span>
-                        {slot.occupied ? (
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                        ) : (
-                          <span className="h-1.5 w-1.5 rounded-full bg-zinc-700" />
-                        )}
+                {(() => {
+                  const fixed = mode === "wide-primary" ? activeV.fixedWidePrimary
+                    : mode === "wide-alt" ? activeV.fixedWideAlt
+                    : activeV.fixedShortPrimary;
+                  const modeLabel = mode === "wide-primary" ? "geniş (y=720)" : mode === "wide-alt" ? "geniş (+8px)" : "kısa (y=770)";
+                  return (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] text-zinc-400">
+                          Mod: <span className="text-zinc-200">{modeLabel}</span>
+                          <span className="text-zinc-600 ml-2">· std≥<span className="text-zinc-300 tabular-nums">{fixed.stdThreshold}</span> & bright≥<span className="text-zinc-300 tabular-nums">{(fixed.brightMinRatio * 100).toFixed(0)}%</span></span>
+                        </div>
+                        <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-[10px] tabular-nums">
+                          {fixed.occupiedCount}/9 dolu
+                        </Badge>
                       </div>
-                <div className="bg-zinc-950 p-0.5">
-                        <div className="text-[7px] uppercase text-zinc-600">raw</div>
-                        {slot.cropB64 ? <img src={slot.cropB64} alt={`slot ${slot.index + 1}`} className="w-full h-10 object-cover" /> : <div className="w-full h-10 bg-zinc-950" />}
+                      <div className="grid grid-cols-9 gap-1.5">
+                        {fixed.slots.map((slot) => (
+                          <div
+                            key={slot.index}
+                            className={`rounded-md border overflow-hidden flex flex-col ${
+                              slot.occupied
+                                ? "border-emerald-500/50 bg-emerald-500/[0.08]"
+                                : "border-zinc-800 bg-zinc-900/40"
+                            }`}
+                          >
+                            <div className="px-1 py-0.5 border-b border-zinc-800/80 flex items-center justify-between">
+                              <span className="text-[8px] text-zinc-600">#{slot.index + 1}</span>
+                              {slot.occupied ? (
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                              ) : (
+                                <span className="h-1.5 w-1.5 rounded-full bg-zinc-700" />
+                              )}
+                            </div>
+                            <div className="bg-zinc-950 p-0.5">
+                              <div className="text-[7px] uppercase text-zinc-600">raw</div>
+                              {slot.cropB64 ? <img src={slot.cropB64} alt={`slot ${slot.index + 1}`} className="w-full h-10 object-cover" /> : <div className="w-full h-10 bg-zinc-950" />}
+                            </div>
+                            <div className="px-1 py-0.5 text-[8px] text-zinc-600 tabular-nums">
+                              σ{slot.stdDev.toFixed(0)} · {(slot.brightRatio * 100).toFixed(0)}%
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <div className="px-1 py-0.5 text-[8px] text-zinc-600 tabular-nums">
-                        σ{slot.stdDev.toFixed(0)} · {(slot.brightRatio * 100).toFixed(0)}%
+                      <div className="text-[10px] text-zinc-500">
+                        Std-dev (σ): {fixed.slots.map((s) => s.occupied ? `${s.index + 1}→σ${s.stdDev.toFixed(0)}` : null).filter(Boolean).join(" · ") || "yok"}
                       </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="text-[10px] text-zinc-500">
-                  Std-dev (σ): {(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).slots.map((s) => s.occupied ? `${s.index + 1}→σ${s.stdDev.toFixed(0)}` : null).filter(Boolean).join(" · ") || "yok"}
-                </div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 

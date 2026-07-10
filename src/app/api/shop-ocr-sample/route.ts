@@ -76,8 +76,8 @@ export async function GET(req: NextRequest) {
     const safeName = champ.name.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/'/g, "&#39;");
     cardEls.push(`<text x="${textX}" y="${textY}" font-family="DejaVu Sans, sans-serif" font-size="${fontSize}" font-weight="bold" fill="#f0f0f0" text-anchor="middle">${safeName}</text>`);
 
-    // Cost indicator (small number top-left of card).
-    cardEls.push(`<text x="${x1 + 6}" y="${SHOP_BAND_TOP + 12}" font-family="DejaVu Sans, sans-serif" font-size="10" font-weight="bold" fill="${color}">${champ.cost}</text>`);
+    // Cost indicator (small number top-RIGHT of card — matches real TFT layout).
+    cardEls.push(`<text x="${x2 - 6}" y="${SHOP_BAND_TOP + 12}" font-family="DejaVu Sans, sans-serif" font-size="10" font-weight="bold" fill="${color}" text-anchor="end">${champ.cost}</text>`);
   }
 
   // Seeded noise.
