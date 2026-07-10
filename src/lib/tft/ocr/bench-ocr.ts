@@ -1,21 +1,19 @@
 /**
  * Bench OCR engine — PLAN.md 15.5 step 4 (Bench, easy).
  *
- * TFT bench = 9 slots directly above the shop. Each occupied slot shows a
- * green HP bar (~ [0, 255, 18]). Empty slots show no green. So "bench read"
- * = count green slots = how many units are on the bench.
+ * REVISED APPROACH (2026-07-10): Green HP bar detection did NOT work on real
+ * TFT screenshots. New approach: COLOR VARIANCE.
  *
- * This is the FIRST pure-CV step (no OCR, no Tesseract). It's the gateway
- * to the CV path: color detection → cluster counting → slot mapping.
+ * A bench slot that is OCCUPIED shows a champion portrait (lots of colors,
+ * high variance). An EMPTY slot is a flat dark panel (low variance, near-black).
+ * So "bench read" = for each slot, compute color std-dev → occupied if high.
  *
- * Two modes (both run, both reported):
- *   1. FIXED: 9 hard-coded slot bboxes (1920x1080 reference). For each slot,
- *      count green pixels; if count > threshold → slot is occupied.
- *   2. AUTO: scan the entire bench band, find green pixel clusters, group
- *      them by x-coordinate. Each cluster = one occupied slot. This is
- *      coordinate-independent — robust against resolution / layout shifts.
+ * This is coordinate-independent in spirit: even auto-detect scans for
+ * high-variance clusters in the bench band.
  *
- * Multi-variant sweep (PLAN 15.7): tries several green-threshold combos.
+ * Two modes (both run):
+ *   1. FIXED: 9 hard-coded slot bboxes. For each, compute std-dev of luminance.
+ *   2. AUTO: scan bench band, find high-variance columns, cluster them.
  */
 
 import sharp from "sharp";
@@ -26,14 +24,6 @@ import {
 } from "./engine";
 
 // ─── Bench slot coordinates (1920x1080 reference) ──────────────────────────
-// TFT-OCR-BOT says bench is at y=777, 9 slots. Shop is at y=1039-1070.
-// Bench slot HP bar is ~10px tall, centered horizontally in each slot.
-// Slot width ≈ 110px (996px total / 9 slots). First slot center x ≈ 535.
-//
-// These are educated estimates — the user will verify via the tester which
-// coordinate set works on their real TFT screenshot. Auto-detect mode is
-// the fallback if fixed coords are wrong.
-
 const BENCH_Y_TOP = 770;
 const BENCH_Y_BOTTOM = 845;
 const BENCH_SLOT_WIDTH = 110;
@@ -48,54 +38,55 @@ function benchSlotBbox(centerX: number): [number, number, number, number] {
   return [centerX - half, BENCH_Y_TOP, centerX + half, BENCH_Y_BOTTOM];
 }
 
-// Alternative coordinate set (shifted +8px right, in case the bench is offset).
 function benchSlotCentersAlt(): number[] {
   return benchSlotCenters().map((x) => x + 8);
 }
 
-// ─── Green detection variants ─────────────────────────────────────────────
-export interface GreenVariant {
+// ─── Occupancy detection variants ─────────────────────────────────────────
+export interface OccupancyVariant {
   name: string;
-  /** Green pixel test: G >= gMin AND R <= rMax AND B <= bMax */
-  gMin: number;
-  rMax: number;
-  bMax: number;
+  /** Std-dev threshold (0-100, on luminance 0-255). Slot occupied if std > threshold. */
+  stdThreshold: number;
+  /** Minimum fraction of "bright" pixels (luminance > 60) for occupied. Filters near-black noise. */
+  brightMinRatio: number;
 }
 
-export const GREEN_VARIANTS: GreenVariant[] = [
-  { name: "strict/255-0-18", gMin: 200, rMax: 80, bMax: 80 },   // near-pure green
-  { name: "mid/180-100-100", gMin: 180, rMax: 100, bMax: 100 }, // typical TFT green
-  { name: "loose/150-130-130", gMin: 150, rMax: 130, bMax: 130 }, // faded green
-  { name: "very-loose/120-150-150", gMin: 120, rMax: 150, bMax: 150 }, // very faded
+export const OCCUPANCY_VARIANTS: OccupancyVariant[] = [
+  { name: "strict/std30-bright10", stdThreshold: 30, brightMinRatio: 0.10 },
+  { name: "mid/std20-bright05", stdThreshold: 20, brightMinRatio: 0.05 },
+  { name: "loose/std12-bright03", stdThreshold: 12, brightMinRatio: 0.03 },
+  { name: "very-loose/std8-bright02", stdThreshold: 8, brightMinRatio: 0.02 },
 ];
 
 // ─── Result types ─────────────────────────────────────────────────────────
 export interface BenchSlotResult {
-  index: number; // 0-8
+  index: number;
   bbox: [number, number, number, number];
   occupied: boolean;
-  greenPixelCount: number;
-  greenRatio: number; // greenPixelCount / totalPixels
+  /** Std-dev of luminance (0-255 scale, reported as 0-100). */
+  stdDev: number;
+  /** Fraction of pixels with luminance > 60 (0-1). */
+  brightRatio: number;
+  /** Mean luminance (0-255). */
+  meanLum: number;
   cropB64: string;
 }
 
 export interface BenchFixedResult {
   variantName: string;
   coordSet: "primary" | "alt";
-  threshold: number; // green pixel count to consider "occupied"
+  stdThreshold: number;
+  brightMinRatio: number;
   slots: BenchSlotResult[];
   occupiedCount: number;
   occupiedIndices: number[];
 }
 
 export interface BenchAutoCluster {
-  /** Center x of the cluster (in actual image coordinates). */
   centerX: number;
-  /** Width of the cluster in pixels. */
   width: number;
-  /** Total green pixels in the cluster. */
-  greenCount: number;
-  /** Nearest fixed slot index (0-8) this cluster maps to, or null. */
+  /** Average std-dev in the cluster. */
+  avgStd: number;
   mappedSlotIndex: number | null;
 }
 
@@ -106,7 +97,7 @@ export interface BenchAutoResult {
 }
 
 export interface BenchVariantResult {
-  greenVariant: string;
+  occupancyVariant: string;
   fixedPrimary: BenchFixedResult;
   fixedAlt: BenchFixedResult;
   auto: BenchAutoResult;
@@ -115,23 +106,24 @@ export interface BenchVariantResult {
 
 export interface BenchOcrResult {
   ok: boolean;
-  tesseractAvailable: boolean; // always true-ish (bench doesn't use tesseract, but reported for UI parity)
+  tesseractAvailable: boolean;
   imageWidth: number;
   imageHeight: number;
   variants: BenchVariantResult[];
-  /** Best occupied count (majority vote across all variants + modes). */
   bestOccupiedCount: number | null;
   bestVariant: string | null;
   error: string | null;
 }
 
-// ─── Green pixel counting ─────────────────────────────────────────────────
+// ─── Luminance stats ──────────────────────────────────────────────────────
 
-async function countGreenInRegion(
-  pngBuf: Buffer,
-  region: { left: number; top: number; width: number; height: number },
-  variant: GreenVariant
-): Promise<{ count: number; ratio: number; total: number }> {
+interface LumStats {
+  std: number; // 0-255
+  brightRatio: number; // 0-1
+  mean: number; // 0-255
+}
+
+async function computeLumStats(pngBuf: Buffer, region: { left: number; top: number; width: number; height: number }): Promise<LumStats> {
   const raw = await sharp(pngBuf)
     .extract({ left: region.left, top: region.top, width: region.width, height: region.height })
     .ensureAlpha()
@@ -139,17 +131,33 @@ async function countGreenInRegion(
     .toBuffer();
 
   const channels = 4;
-  let count = 0;
   const total = raw.length / channels;
-  for (let i = 0; i < raw.length; i += channels) {
+  // Compute luminance per pixel (Rec. 601: 0.299R + 0.587G + 0.114B).
+  const lums = new Float64Array(total);
+  let sum = 0;
+  let brightCount = 0;
+  for (let i = 0, p = 0; i < raw.length; i += channels, p++) {
     const r = raw[i];
     const g = raw[i + 1];
     const b = raw[i + 2];
-    if (g >= variant.gMin && r <= variant.rMax && b <= variant.bMax) {
-      count++;
-    }
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    lums[p] = lum;
+    sum += lum;
+    if (lum > 60) brightCount++;
   }
-  return { count, ratio: total > 0 ? count / total : 0, total };
+  const mean = sum / total;
+  // Std-dev.
+  let varSum = 0;
+  for (let p = 0; p < total; p++) {
+    const d = lums[p] - mean;
+    varSum += d * d;
+  }
+  const std = Math.sqrt(varSum / total);
+  return {
+    std,
+    brightRatio: brightCount / total,
+    mean,
+  };
 }
 
 // ─── Fixed-slot mode ──────────────────────────────────────────────────────
@@ -160,8 +168,7 @@ async function runFixedMode(
   imgH: number,
   centers: number[],
   coordSet: "primary" | "alt",
-  variant: GreenVariant,
-  occupiedThreshold: number
+  variant: OccupancyVariant
 ): Promise<BenchFixedResult> {
   const slots: BenchSlotResult[] = [];
   const occupiedIndices: number[] = [];
@@ -169,17 +176,17 @@ async function runFixedMode(
   for (let i = 0; i < 9; i++) {
     const bbox1080 = benchSlotBbox(centers[i]);
     const region = scaleBbox(bbox1080, imgW, imgH);
-    const { count, ratio } = await countGreenInRegion(pngBuf, region, variant);
-    const occupied = count >= occupiedThreshold;
-
-    // Save a small crop for the UI (showing the slot).
+    const stats = await computeLumStats(pngBuf, region);
+    // Occupied if std-dev high AND enough bright pixels (not just noise).
+    const occupied = stats.std >= variant.stdThreshold && stats.brightRatio >= variant.brightMinRatio;
     const cropPng = await cropRegion(pngBuf, region);
     slots.push({
       index: i,
       bbox: bbox1080,
       occupied,
-      greenPixelCount: count,
-      greenRatio: ratio,
+      stdDev: stats.std,
+      brightRatio: stats.brightRatio,
+      meanLum: stats.mean,
       cropB64: `data:image/png;base64,${cropPng.toString("base64")}`,
     });
     if (occupied) occupiedIndices.push(i);
@@ -188,25 +195,24 @@ async function runFixedMode(
   return {
     variantName: variant.name,
     coordSet,
-    threshold: occupiedThreshold,
+    stdThreshold: variant.stdThreshold,
+    brightMinRatio: variant.brightMinRatio,
     slots,
     occupiedCount: occupiedIndices.length,
     occupiedIndices,
   };
 }
 
-// ─── Auto-detect mode (coordinate-independent) ────────────────────────────
-// Scan the entire bench band. For each column x, count green pixels in that
-// column (vertical strip). Group adjacent columns with green count > 0 into
-// clusters. Each cluster = one occupied slot.
+// ─── Auto-detect mode ─────────────────────────────────────────────────────
+// Scan bench band. For each column, compute std-dev of luminance vertically.
+// High-std columns = part of an occupied slot. Cluster them.
 
 async function runAutoMode(
   pngBuf: Buffer,
   imgW: number,
   imgH: number,
-  variant: GreenVariant
+  variant: OccupancyVariant
 ): Promise<BenchAutoResult> {
-  // Bench band: scale y=770..845 to actual image height.
   const bandTop = Math.round(770 * (imgH / 1080));
   const bandHeight = Math.max(1, Math.round(75 * (imgH / 1080)));
   const bandLeft = Math.round(480 * (imgW / 1920));
@@ -219,38 +225,41 @@ async function runAutoMode(
     .toBuffer();
 
   const channels = 4;
-  // Column histogram: green pixel count per column.
-  const colGreen = new Array(bandWidth).fill(0) as number[];
+  // For each column, compute std-dev of luminance.
+  const colStd = new Float64Array(bandWidth);
   for (let x = 0; x < bandWidth; x++) {
+    let sum = 0;
     for (let y = 0; y < bandHeight; y++) {
       const i = (y * bandWidth + x) * channels;
-      const r = raw[i];
-      const g = raw[i + 1];
-      const b = raw[i + 2];
-      if (g >= variant.gMin && r <= variant.rMax && b <= variant.bMax) {
-        colGreen[x]++;
-      }
+      sum += 0.299 * raw[i] + 0.587 * raw[i + 1] + 0.114 * raw[i + 2];
     }
+    const mean = sum / bandHeight;
+    let varSum = 0;
+    for (let y = 0; y < bandHeight; y++) {
+      const i = (y * bandWidth + x) * channels;
+      const lum = 0.299 * raw[i] + 0.587 * raw[i + 1] + 0.114 * raw[i + 2];
+      const d = lum - mean;
+      varSum += d * d;
+    }
+    colStd[x] = Math.sqrt(varSum / bandHeight);
   }
 
-  // Group adjacent columns with green count > 0 into clusters.
-  // Minimum cluster width = 4px (filters out single-pixel noise).
-  const MIN_WIDTH = 4;
+  // Cluster adjacent columns with std > threshold.
+  const MIN_WIDTH = 8; // wider than green mode — portraits are bigger than HP bars.
   const clusters: BenchAutoCluster[] = [];
   let clusterStart = -1;
-  let clusterGreenSum = 0;
+  let clusterStdSum = 0;
   for (let x = 0; x <= bandWidth; x++) {
-    const hasGreen = x < bandWidth && colGreen[x] > 0;
-    if (hasGreen && clusterStart === -1) {
+    const hasContent = x < bandWidth && colStd[x] > variant.stdThreshold * 0.7; // slightly relaxed
+    if (hasContent && clusterStart === -1) {
       clusterStart = x;
-      clusterGreenSum = colGreen[x];
-    } else if (hasGreen) {
-      clusterGreenSum += colGreen[x];
+      clusterStdSum = colStd[x];
+    } else if (hasContent) {
+      clusterStdSum += colStd[x];
     } else if (clusterStart !== -1) {
       const width = x - clusterStart;
       if (width >= MIN_WIDTH) {
         const centerXImg = bandLeft + clusterStart + Math.floor(width / 2);
-        // Map to nearest fixed slot (1080p reference).
         const centers1080 = benchSlotCenters();
         const scaleX = imgW / 1920;
         let nearest: number | null = null;
@@ -266,12 +275,12 @@ async function runAutoMode(
         clusters.push({
           centerX: centerXImg,
           width,
-          greenCount: clusterGreenSum,
+          avgStd: clusterStdSum / width,
           mappedSlotIndex: nearest,
         });
       }
       clusterStart = -1;
-      clusterGreenSum = 0;
+      clusterStdSum = 0;
     }
   }
 
@@ -299,55 +308,44 @@ export async function runBenchOcrSweep(fullImage: Buffer): Promise<BenchOcrResul
       variants: [],
       bestOccupiedCount: null,
       bestVariant: null,
-      error: "Image has no dimensions (corrupt or unsupported format).",
+      error: "Image has no dimensions.",
     };
   }
 
   const pngBuf = await sharp(fullImage).png().toBuffer();
 
-  // Occupied threshold: a slot needs at least this many green pixels to count
-  // as occupied. Scales with image resolution (slot area shrinks at lower res).
-  const slotArea1080 = BENCH_SLOT_WIDTH * (BENCH_Y_BOTTOM - BENCH_Y_TOP); // ~8250 px²
-  const slotAreaImg = slotArea1080 * (imgW / 1920) * (imgH / 1080);
-  const occupiedThreshold = Math.max(20, Math.floor(slotAreaImg * 0.02)); // 2% of slot area
-
   const variants: BenchVariantResult[] = [];
   const counts: number[] = [];
 
-  for (const gv of GREEN_VARIANTS) {
+  for (const ov of OCCUPANCY_VARIANTS) {
     try {
-      const fixedPrimary = await runFixedMode(
-        pngBuf, imgW, imgH, benchSlotCenters(), "primary", gv, occupiedThreshold
-      );
-      const fixedAlt = await runFixedMode(
-        pngBuf, imgW, imgH, benchSlotCentersAlt(), "alt", gv, occupiedThreshold
-      );
-      const auto = await runAutoMode(pngBuf, imgW, imgH, gv);
+      const fixedPrimary = await runFixedMode(pngBuf, imgW, imgH, benchSlotCenters(), "primary", ov);
+      const fixedAlt = await runFixedMode(pngBuf, imgW, imgH, benchSlotCentersAlt(), "alt", ov);
+      const auto = await runAutoMode(pngBuf, imgW, imgH, ov);
 
       variants.push({
-        greenVariant: gv.name,
+        occupancyVariant: ov.name,
         fixedPrimary,
         fixedAlt,
         auto,
         error: null,
       });
 
-      // Collect counts for majority vote (prefer auto if it agrees with a fixed).
       counts.push(fixedPrimary.occupiedCount);
       counts.push(fixedAlt.occupiedCount);
       counts.push(auto.occupiedCount);
     } catch (e) {
       variants.push({
-        greenVariant: gv.name,
-        fixedPrimary: { variantName: gv.name, coordSet: "primary", threshold: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
-        fixedAlt: { variantName: gv.name, coordSet: "alt", threshold: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
-        auto: { variantName: gv.name, clusters: [], occupiedCount: 0 },
+        occupancyVariant: ov.name,
+        fixedPrimary: { variantName: ov.name, coordSet: "primary", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
+        fixedAlt: { variantName: ov.name, coordSet: "alt", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
+        auto: { variantName: ov.name, clusters: [], occupiedCount: 0 },
         error: e instanceof Error ? e.message : String(e),
       });
     }
   }
 
-  // Majority vote: the count that appears most often across all modes/variants.
+  // Majority vote.
   const countFreq = new Map<number, number>();
   for (const c of counts) countFreq.set(c, (countFreq.get(c) ?? 0) + 1);
   let bestOccupiedCount: number | null = null;
@@ -358,10 +356,7 @@ export async function runBenchOcrSweep(fullImage: Buffer): Promise<BenchOcrResul
       bestOccupiedCount = c;
     }
   }
-  // Best variant = first variant whose auto count matches the majority.
-  const bestVariant = variants.find(
-    (v) => v.auto.occupiedCount === bestOccupiedCount && v.error === null
-  )?.greenVariant ?? variants[0]?.greenVariant ?? null;
+  const bestVariant = variants.find((v) => v.auto.occupiedCount === bestOccupiedCount && v.error === null)?.occupancyVariant ?? variants[0]?.occupancyVariant ?? null;
 
   return {
     ok: true,

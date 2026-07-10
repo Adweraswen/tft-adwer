@@ -103,6 +103,26 @@ export async function processCrop(
   threshold: number,
   scale: number
 ): Promise<Buffer> {
+  return processCropMode(fullPng, region, threshold, scale, "white");
+}
+
+export type CropMode = "white" | "bright";
+
+/**
+ * Prepare a crop for OCR with selectable mode:
+ *   - "white":  R,G,B all > threshold → text. Strict — only near-white pixels.
+ *               Good for pure-white text (gold number, round indicator on dark pill).
+ *   - "bright": max(R,G,B) > threshold → text (value/brightness based, hue-independent).
+ *               Catches light-gray / off-white text that "white" mode misses.
+ *               Real TFT round text is often grayish, not pure white.
+ */
+export async function processCropMode(
+  fullPng: Buffer,
+  region: CropRegion,
+  threshold: number,
+  scale: number,
+  mode: CropMode
+): Promise<Buffer> {
   const { width: w, height: h } = region;
   const regionBuf = await sharp(fullPng)
     .extract({ left: region.left, top: region.top, width: w, height: h })
@@ -116,7 +136,14 @@ export async function processCrop(
     const r = regionBuf[i];
     const g = regionBuf[i + 1];
     const b = regionBuf[i + 2];
-    const isText = r > threshold && g > threshold && b > threshold;
+    let isText: boolean;
+    if (mode === "bright") {
+      // Value/brightness-based: max channel > threshold.
+      isText = Math.max(r, g, b) > threshold;
+    } else {
+      // Strict white: all three channels > threshold.
+      isText = r > threshold && g > threshold && b > threshold;
+    }
     const v = isText ? 0 : 255;
     out[i] = v;
     out[i + 1] = v;

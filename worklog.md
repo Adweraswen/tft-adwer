@@ -5600,3 +5600,35 @@ Sıradaki adım (PLAN 15.5):
 - src/app/api/ddragon-champions/route.ts — DDragon list
 - src/app/api/ddragon-icons/route.ts — DDragon icon cache
 - src/components/tft/shop-ocr-tester.tsx, item-ocr-tester.tsx, ddragon-status.tsx
+
+---
+Task ID: fix-round-bench-item-005
+Agent: Z.ai Code (main)
+Task: Kullanıcı test sonuçlarına göre 3 düzeltme: (1) Round OCR processed bembeyaz çıkıyor → threshold düşür + bright modu, (2) Bench yeşil HP bar çıkmıyor → std-dev yaklaşımına geç, (3) Item sadece renk yorumluyor → deneysel işaretle.
+
+Work Log:
+- src/lib/tft/ocr/engine.ts: processCropMode eklendi. mode: "white" (R,G,B hepsi > thr) veya "bright" (max(R,G,B) > thr). processCrop artık processCropMode'a delegate. "bright" modu grimsi/off-white text'i yakalar (gerçek TFT round text'i saf beyaz değil).
+- src/lib/tft/ocr/round-ocr.ts: ROUND_VARIANTS genişletildi (10 varyant). "white" modu 3 (180/150/130), "bright" modu 5 (120/100/150 + 4x scale + psm8), "wide-bright" 2. RoundVariantResult'e mode alanı eklendi. processCropMode çağrısı güncellendi.
+- src/lib/tft/ocr/bench-ocr.ts: TAMAMEN yeniden yazıldı. Yeşil tespiti kaldırıldı, yerine RENK ÇEŞİTLİLİĞİ (std-dev):
+  - computeLumStats: luminance (Rec.601: 0.299R+0.587G+0.114B) std-dev + brightRatio (lum>60) + mean.
+  - OCCUPANCY_VARIANTS: 4 (strict std30/bright10%, mid std20/bright5%, loose std12/bright3%, very-loose std8/bright2%).
+  - Fixed mode: 9 slot için std + bright hesapla, occupied = std≥thr AND bright≥minRatio.
+  - Auto mode: bench band'ı sütun sütun tara, yüksek-std sütunları kümele (min 8px genişlik, yeşil moddan daha geniş çünkü portre > HP bar).
+- src/app/api/bench-ocr-sample/route.ts: sentetik bench güncellendi. Dolu slot artık çok renkli şampiyon portresi (3 farklı hue: body + head + accent), yeşil HP bar kaldırıldı.
+- src/components/tft/bench-ocr-tester.tsx: UI güncellendi. greenPixelCount/greenRatio → stdDev/brightRatio/meanLum. "yeşil threshold" → "çeşitlilik". Slot kartında σ{stdDev} · {brightRatio}% gösterimi. greenVariant → occupancyVariant. Başlık: "Bench — renk çeşitliliği (std-dev)". Syntax hatası (fazladan }) düzeltildi.
+- src/components/tft/item-ocr-tester.tsx: "deneysel" badge eklendi (FlaskConical icon, amber renk). Uyarı kutusu: "Renk tek başına yetmez — aynı renk ailesindeki itemlar karışır. Template matching gelene kadar yaklaşık."
+
+Stage Summary — 3 düzeltme de TAMAM:
+- Round: sentetik "3-2" → 10 varyantın HEPSI okudu (önce sadece 5/8 okuyordu). "white" + "bright" modları çalışıyor. Kazanan white/180/3x/psm7.
+- Bench: occupied=4 → "4 dolu" ✓, occupied=0 → "0" ✓, occupied=9 → "9" ✓. Dolu slot σ=46-55, boş slot düşük. std-dev yaklaşımı yeşilden çok daha sağlam.
+- Item: "deneysel" işaretlendi, kullanıcı artık renk yaklaşımının sınırlarını biliyor.
+- VLM doğrulama: 5/5 (Round okundu, bright/white modları, Bench N dolu, σ değerleri, Item deneysel uyarı).
+
+Kullanıcıya: gerçek TFT screenshot ile Round + Bench'i tekrar test et. Round'da "bright" modu grayish text'i yakalamalı, Bench'te std-dev dolu slotları saymalı. Item zaten deneysel — template matching bekleniyor.
+
+Önemli değişiklikler:
+- engine.ts: processCropMode (white + bright)
+- round-ocr.ts: 10 varyant, bright modu
+- bench-ocr.ts: yeşil → std-dev (tam rewrite)
+- bench-ocr-sample: yeşil HP bar → renkli portre
+- item-ocr-tester: deneysel uyarı

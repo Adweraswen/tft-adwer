@@ -15,7 +15,7 @@ import { useCallback, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Package, Upload, Loader2, CheckCircle2, XCircle, ImageIcon, Zap, Sparkles, Palette } from "lucide-react";
+import { Package, Upload, Loader2, CheckCircle2, XCircle, ImageIcon, Zap, Sparkles, Palette, AlertTriangle, FlaskConical } from "lucide-react";
 import { StepBadge } from "@/components/tft/ocr-test-section";
 
 interface ItemColorSig {
@@ -123,8 +123,8 @@ export function ItemOcrTester() {
         <CardDescription className="flex items-center gap-1.5 text-zinc-500">
           <Package className="h-3.5 w-3.5" /> Item tanıma test aracı
           <StepBadge step={6} label="PLAN 15.5" />
-          <Badge variant="outline" className="ml-auto border-rose-500/40 text-rose-300 bg-rose-500/10 text-[9px]">
-            renk imzası + OCR fallback
+          <Badge variant="outline" className="ml-auto border-amber-500/40 text-amber-300 bg-amber-500/10 text-[9px] gap-1">
+            <FlaskConical className="h-2.5 w-2.5" /> deneysel
           </Badge>
         </CardDescription>
         <CardTitle className="text-base">Item tanıma — renk imzası</CardTitle>
@@ -132,6 +132,14 @@ export function ItemOcrTester() {
           Item icon bölgesi yükle. Hue/saturation/brightness imzası çıkarılıp item tablosuna
           fuzzy match yapılır. OCR fallback (hover ismi) var. <span className="text-zinc-400">Template matching DDragon&apos;dan sonra.</span>
         </p>
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/[0.07] px-2.5 py-1.5 text-[10px] text-amber-200/90 flex items-start gap-1.5">
+          <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+          <span>
+            <span className="font-semibold">Deneysel:</span> Renk tek başına yetmez — aynı renk ailesindeki
+            itemlar (Spatula/Recurve Bow/Giant&apos;s Belt hepsi turuncu) karışır. Template matching (DDragon iconları)
+            gelene kadar sonuçlar yaklaşık. Test için fikir verir, üretime hazır değil.
+          </span>
+        </div>
       </CardHeader>
 
       <CardContent className="space-y-4">

@@ -20,6 +20,8 @@ import {
   scaleBbox,
   cropRegion,
   processCrop,
+  processCropMode,
+  type CropMode,
   ocrText,
 } from "./engine";
 
@@ -30,6 +32,7 @@ export interface RoundVariant {
   threshold: number;
   scale: number;
   psm: number;
+  mode: CropMode;
 }
 
 // Primary: TFT-OCR-BOT coords (PLAN 15.5)
@@ -38,14 +41,19 @@ const PRIMARY_BBOX: [number, number, number, number] = [753, 10, 870, 34];
 const WIDE_BBOX: [number, number, number, number] = [740, 6, 890, 40];
 
 export const ROUND_VARIANTS: RoundVariant[] = [
-  { name: "tft-ocr-bot/180/3x/psm7", bbox: PRIMARY_BBOX, threshold: 180, scale: 3, psm: 7 },
-  { name: "tft-ocr-bot/160/3x/psm7", bbox: PRIMARY_BBOX, threshold: 160, scale: 3, psm: 7 },
-  { name: "tft-ocr-bot/200/3x/psm7", bbox: PRIMARY_BBOX, threshold: 200, scale: 3, psm: 7 },
-  { name: "tft-ocr-bot/180/4x/psm7", bbox: PRIMARY_BBOX, threshold: 180, scale: 4, psm: 7 },
-  { name: "tft-ocr-bot/180/3x/psm8", bbox: PRIMARY_BBOX, threshold: 180, scale: 3, psm: 8 },
-  { name: "wide/180/3x/psm7", bbox: WIDE_BBOX, threshold: 180, scale: 3, psm: 7 },
-  { name: "wide/160/3x/psm7", bbox: WIDE_BBOX, threshold: 160, scale: 3, psm: 7 },
-  { name: "wide/200/3x/psm7", bbox: WIDE_BBOX, threshold: 200, scale: 3, psm: 7 },
+  // "white" mode (strict — all RGB > threshold) — works for pure-white text
+  { name: "white/180/3x/psm7", bbox: PRIMARY_BBOX, threshold: 180, scale: 3, psm: 7, mode: "white" },
+  { name: "white/150/3x/psm7", bbox: PRIMARY_BBOX, threshold: 150, scale: 3, psm: 7, mode: "white" },
+  { name: "white/130/3x/psm7", bbox: PRIMARY_BBOX, threshold: 130, scale: 3, psm: 7, mode: "white" },
+  // "bright" mode (max RGB > threshold) — catches grayish/off-white text
+  { name: "bright/120/3x/psm7", bbox: PRIMARY_BBOX, threshold: 120, scale: 3, psm: 7, mode: "bright" },
+  { name: "bright/100/3x/psm7", bbox: PRIMARY_BBOX, threshold: 100, scale: 3, psm: 7, mode: "bright" },
+  { name: "bright/150/3x/psm7", bbox: PRIMARY_BBOX, threshold: 150, scale: 3, psm: 7, mode: "bright" },
+  { name: "bright/120/4x/psm7", bbox: PRIMARY_BBOX, threshold: 120, scale: 4, psm: 7, mode: "bright" },
+  { name: "bright/120/3x/psm8", bbox: PRIMARY_BBOX, threshold: 120, scale: 3, psm: 8, mode: "bright" },
+  // wide fallback with bright mode
+  { name: "wide-bright/120/3x/psm7", bbox: WIDE_BBOX, threshold: 120, scale: 3, psm: 7, mode: "bright" },
+  { name: "wide-bright/100/3x/psm7", bbox: WIDE_BBOX, threshold: 100, scale: 3, psm: 7, mode: "bright" },
 ];
 
 const ROUND_WHITELIST = "0123456789-";
@@ -57,6 +65,7 @@ export interface RoundVariantResult {
   threshold: number;
   scale: number;
   psm: number;
+  mode: CropMode;
   rawOcr: string;
   /** Parsed round string e.g. "3-2", or null if OCR failed / sanity check failed. */
   round: string | null;
@@ -135,7 +144,7 @@ export async function runRoundOcrSweep(fullImage: Buffer): Promise<RoundOcrResul
     try {
       const region = scaleBbox(v.bbox, imgW, imgH);
       const rawCrop = await cropRegion(pngBuf, region);
-      const processed = await processCrop(pngBuf, region, v.threshold, v.scale);
+      const processed = await processCropMode(pngBuf, region, v.threshold, v.scale, v.mode);
 
       const rawOcr = tesseractAvailable ? await ocrText(processed, v.psm, ROUND_WHITELIST) : "";
       const parsed = parseRound(rawOcr);
@@ -147,6 +156,7 @@ export async function runRoundOcrSweep(fullImage: Buffer): Promise<RoundOcrResul
         threshold: v.threshold,
         scale: v.scale,
         psm: v.psm,
+        mode: v.mode,
         rawOcr,
         round,
         stage: parsed?.stage ?? null,
@@ -169,6 +179,7 @@ export async function runRoundOcrSweep(fullImage: Buffer): Promise<RoundOcrResul
         threshold: v.threshold,
         scale: v.scale,
         psm: v.psm,
+        mode: v.mode,
         rawOcr: "",
         round: null,
         stage: null,

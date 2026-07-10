@@ -23,7 +23,7 @@ const BENCH_Y_BOTTOM = 845;
 const BENCH_SLOT_WIDTH = 110;
 const BENCH_FIRST_SLOT_CENTER = 535;
 
-// Green HP bar color (PLAN 15.5: [0, 255, 18]).
+// Green HP bar color (kept for backwards compat but no longer the primary signal).
 const GREEN = "#00ff12";
 
 export async function GET(req: NextRequest) {
@@ -66,24 +66,22 @@ export async function GET(req: NextRequest) {
     slotEls.push(`<rect x="${left}" y="${top}" width="${width}" height="${height}" rx="3" fill="#0d1525" stroke="#1f2d44" stroke-width="1"/>`);
 
     if (occupiedSet.has(i)) {
-      // Champion "silhouette" — a colored rounded rect (placeholder for the portrait).
-      const hue = Math.floor(rand() * 360);
-      slotEls.push(`<rect x="${left + 8}" y="${top + 6}" width="${width - 16}" height="${height - 20}" rx="4" fill="hsl(${hue}, 45%, 35%)" stroke="hsl(${hue}, 50%, 50%)" stroke-width="1"/>`);
+      // Champion "portrait" — MULTIPLE colored shapes (high color variance, unlike empty slots).
+      // This simulates a real champion portrait: head + body + accent colors.
+      const hue1 = Math.floor(rand() * 360);
+      const hue2 = (hue1 + 120 + Math.floor(rand() * 60)) % 360;
+      const hue3 = (hue1 + 240 + Math.floor(rand() * 60)) % 360;
+      // Body (large rect, main color).
+      slotEls.push(`<rect x="${left + 8}" y="${top + 8}" width="${width - 16}" height="${height - 16}" rx="4" fill="hsl(${hue1}, 55%, 40%)" stroke="hsl(${hue1}, 60%, 55%)" stroke-width="1"/>`);
+      // Head (circle, contrasting color).
+      slotEls.push(`<circle cx="${left + width / 2}" cy="${top + height / 2 - 6}" r="${Math.floor(width * 0.18)}" fill="hsl(${hue2}, 60%, 55%)"/>`);
+      // Accent (small shape, third color).
+      slotEls.push(`<rect x="${left + width / 2 - 6}" y="${top + height - 18}" width="12" height="4" rx="2" fill="hsl(${hue3}, 70%, 60%)"/>`);
       // Star indicator (1-3 stars, small yellow dots).
       const stars = 1 + Math.floor(rand() * 3);
       for (let st = 0; st < stars; st++) {
         slotEls.push(`<circle cx="${left + 12 + st * 8}" cy="${top + height - 22}" r="2" fill="#ffd700"/>`);
       }
-      // Green HP bar at the bottom of the slot (~10px tall, ~70% width).
-      const hpBarY = top + height - 12;
-      const hpBarH = 8;
-      const hpBarW = Math.floor(width * 0.7);
-      const hpBarX = left + Math.floor((width - hpBarW) / 2);
-      // Bar background (dark).
-      slotEls.push(`<rect x="${hpBarX}" y="${hpBarY}" width="${hpBarW}" height="${hpBarH}" rx="2" fill="#0a1018"/>`);
-      // Green fill (random 40-100% to simulate HP variance).
-      const hpPct = 0.4 + rand() * 0.6;
-      slotEls.push(`<rect x="${hpBarX}" y="${hpBarY}" width="${Math.floor(hpBarW * hpPct)}" height="${hpBarH}" rx="2" fill="${GREEN}"/>`);
     }
   }
 

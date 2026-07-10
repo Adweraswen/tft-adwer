@@ -3,12 +3,12 @@
 /**
  * BenchOcrTester — Bench OCR test aracı (PLAN.md 15.5 step 4 + 15.7).
  *
- * İLK SAF CV ADIMI — Tesseract yok, sadece yeşil renk tespiti.
- * Bench 9 slot, her dolu slot yeşil HP bar'ı gösterir.
+ * İLK SAF CV ADIMI — Tesseract yok, renk çeşitliliği (std-dev) tespiti.
+ * Bench 9 slot, dolu slot şampiyon portresi (yüksek çeşitlilik), boş slot monoton koyu.
  *
  * İki mod:
- *   1. FIXED: 9 sabit koordinat, her slot için yeşil piksel sayısı.
- *   2. AUTO: koordinat bağımsız — yeşil pikselleri kümele, her küme = 1 slot.
+ *   1. FIXED: 9 sabit koordinat, her slot için luminance std-dev.
+ *   2. AUTO: koordinat bağımsız — yüksek-std sütunları kümele, her küme = 1 slot.
  *
  * Auto mod koordinat yanlışsa bile çalışır (kural 12 — yedek çözüm).
  */
@@ -24,15 +24,17 @@ interface BenchSlotResult {
   index: number;
   bbox: [number, number, number, number];
   occupied: boolean;
-  greenPixelCount: number;
-  greenRatio: number;
+  stdDev: number;
+  brightRatio: number;
+  meanLum: number;
   cropB64: string;
 }
 
 interface BenchFixedResult {
   variantName: string;
   coordSet: "primary" | "alt";
-  threshold: number;
+  stdThreshold: number;
+  brightMinRatio: number;
   slots: BenchSlotResult[];
   occupiedCount: number;
   occupiedIndices: number[];
@@ -41,7 +43,7 @@ interface BenchFixedResult {
 interface BenchAutoCluster {
   centerX: number;
   width: number;
-  greenCount: number;
+  avgStd: number;
   mappedSlotIndex: number | null;
 }
 
@@ -52,7 +54,7 @@ interface BenchAutoResult {
 }
 
 interface BenchVariantResult {
-  greenVariant: string;
+  occupancyVariant: string;
   fixedPrimary: BenchFixedResult;
   fixedAlt: BenchFixedResult;
   auto: BenchAutoResult;
@@ -148,10 +150,11 @@ export function BenchOcrTester() {
             saf CV · tesseract yok
           </Badge>
         </CardDescription>
-        <CardTitle className="text-base">Bench OCR — yeşil HP bar tespiti</CardTitle>
+        <CardTitle className="text-base">Bench — renk çeşitliliği (std-dev)</CardTitle>
         <p className="text-[11px] text-zinc-500 leading-relaxed mt-1">
-          TFT screenshot yükle. Bench 9 slot — her dolu slot yeşil HP bar&apos;ı gösterir.
-          4 yeşil threshold varyantı denenir. <span className="text-zinc-400">İlk saf CV adımı.</span>
+          TFT screenshot yükle. Bench 9 slot — dolu slot şampiyon portresi (yüksek renk çeşitliliği),
+          boş slot monoton koyu (düşük std-dev).
+          4 std-dev varyantı denenir. <span className="text-zinc-400">İlk saf CV adımı.</span>
         </p>
       </CardHeader>
 
@@ -239,11 +242,11 @@ export function BenchOcrTester() {
                   {result.bestOccupiedCount !== null ? (
                     <>Bench&apos;te <span className="text-emerald-300 tabular-nums">{result.bestOccupiedCount}</span> dolu slot</>
                   ) : (
-                    "Hiç yeşil piksel bulunamadı"
+                    "Hiç dolu slot bulunamadı"
                   )}
                 </div>
                 <div className="text-[11px] text-zinc-500 truncate">
-                  En iyi yeşil threshold: <code className="text-zinc-300">{result.bestVariant}</code> · {result.imageWidth}×{result.imageHeight}
+                  En iyi varyant: <code className="text-zinc-300">{result.bestVariant}</code> · {result.imageWidth}×{result.imageHeight}
                 </div>
               </div>
               {result.bestOccupiedCount !== null && (
@@ -255,10 +258,10 @@ export function BenchOcrTester() {
 
             {/* Variant + mode selector */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-wide text-zinc-600">yeşil threshold:</span>
+              <span className="text-[10px] uppercase tracking-wide text-zinc-600">çeşitlilik:</span>
               {result.variants.map((v, i) => (
                 <button
-                  key={v.greenVariant}
+                  key={v.occupancyVariant}
                   onClick={() => setActiveVariant(i)}
                   className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
                     i === activeVariant
@@ -266,7 +269,7 @@ export function BenchOcrTester() {
                       : "border-zinc-700 bg-zinc-900/40 text-zinc-500 hover:text-zinc-300"
                   }`}
                 >
-                  {v.greenVariant}
+                  {v.occupancyVariant}
                 </button>
               ))}
             </div>
@@ -304,7 +307,7 @@ export function BenchOcrTester() {
                 <div className="flex items-center justify-between">
                   <div className="text-[11px] text-zinc-400">
                     Mod: <span className="text-zinc-200">{mode === "fixed-primary" ? "sabit koordinat" : "sabit (+8px)"}</span>
-                    <span className="text-zinc-600 ml-2">· threshold: <span className="text-zinc-300 tabular-nums">{(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).threshold}</span> yeşil piksel</span>
+                    <span className="text-zinc-600 ml-2">· std≥<span className="text-zinc-300 tabular-nums">{(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).stdThreshold}</span> & bright≥<span className="text-zinc-300 tabular-nums">{((mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).brightMinRatio * 100).toFixed(0)}%</span></span>
                   </div>
                   <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-[10px] tabular-nums">
                     {(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).occupiedCount}/9 dolu
@@ -328,19 +331,18 @@ export function BenchOcrTester() {
                           <span className="h-1.5 w-1.5 rounded-full bg-zinc-700" />
                         )}
                       </div>
-                      {slot.cropB64 ? (
-                        <img src={slot.cropB64} alt={`slot ${slot.index + 1}`} className="w-full h-10 object-cover" />
-                      ) : (
-                        <div className="w-full h-10 bg-zinc-950" />
-                      )}
+                <div className="bg-zinc-950 p-0.5">
+                        <div className="text-[7px] uppercase text-zinc-600">raw</div>
+                        {slot.cropB64 ? <img src={slot.cropB64} alt={`slot ${slot.index + 1}`} className="w-full h-10 object-cover" /> : <div className="w-full h-10 bg-zinc-950" />}
+                      </div>
                       <div className="px-1 py-0.5 text-[8px] text-zinc-600 tabular-nums">
-                        {slot.greenPixelCount}px
+                        σ{slot.stdDev.toFixed(0)} · {(slot.brightRatio * 100).toFixed(0)}%
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className="text-[10px] text-zinc-500">
-                  Yeşil piksel oranı: {(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).slots.map((s) => s.occupied ? `${s.index + 1}→${(s.greenRatio * 100).toFixed(0)}%` : null).filter(Boolean).join(" · ") || "yok"}
+                  Std-dev (σ): {(mode === "fixed-primary" ? activeV.fixedPrimary : activeV.fixedAlt).slots.map((s) => s.occupied ? `${s.index + 1}→σ${s.stdDev.toFixed(0)}` : null).filter(Boolean).join(" · ") || "yok"}
                 </div>
               </div>
             )}
@@ -359,7 +361,7 @@ export function BenchOcrTester() {
                 </div>
                 {activeV.auto.clusters.length === 0 ? (
                   <div className="rounded-md border border-zinc-800 bg-zinc-900/40 px-3 py-3 text-center text-[11px] text-zinc-500">
-                    Yeşil küme bulunamadı. Yeşil threshold değişmeyi dene.
+                    Yüksek çeşitlilik kümesi bulunamadı. Varyant değişmeyi dene.
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -369,7 +371,7 @@ export function BenchOcrTester() {
                         <span className="text-zinc-400">küme {i + 1}:</span>
                         <span className="text-zinc-200 tabular-nums">x={c.centerX}</span>
                         <span className="text-zinc-500 tabular-nums">w={c.width}px</span>
-                        <span className="text-zinc-500 tabular-nums">{c.greenCount} yeşil</span>
+                        <span className="text-zinc-500 tabular-nums">σ{c.avgStd.toFixed(0)}</span>
                         {c.mappedSlotIndex !== null ? (
                           <Badge variant="outline" className="ml-auto border-emerald-500/40 text-emerald-300 bg-emerald-500/10 text-[9px]">
                             slot #{c.mappedSlotIndex + 1}
@@ -384,7 +386,7 @@ export function BenchOcrTester() {
                   </div>
                 )}
                 <div className="text-[10px] text-zinc-500">
-                  Auto mod koordinat bilmeden çalışır — yeşil pikselleri x ekseninde kümeler. Her küme = 1 dolu slot.
+                  Auto mod koordinat bilmeden çalışır — yüksek-std sütunları x ekseninde kümeler. Her küme = 1 dolu slot.
                 </div>
               </div>
             )}
@@ -395,7 +397,7 @@ export function BenchOcrTester() {
                 <Button
                   variant={locked ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setLocked(locked ? null : `${activeV.greenVariant}/${mode}`)}
+                  onClick={() => setLocked(locked ? null : `${activeV.occupancyVariant}/${mode}`)}
                   className="h-7 text-xs"
                 >
                   {locked ? (
