@@ -73,6 +73,7 @@ import { UploadZone } from "@/components/tft/upload-zone";
 import { CaptureSetup } from "@/components/tft/capture-setup";
 import { GoldOcrTester } from "@/components/tft/gold-ocr-tester";
 import { RoundOcrTester } from "@/components/tft/round-ocr-tester";
+import { BenchOcrTester } from "@/components/tft/bench-ocr-tester";
 import { OcrTestSection } from "@/components/tft/ocr-test-section";
 import { CompBrowser } from "@/components/tft/comp-browser";
 import { ChampionBrowser } from "@/components/tft/champion-browser";
@@ -783,6 +784,7 @@ export default function Home() {
             <OcrTestSection>
               <GoldOcrTester />
               <RoundOcrTester />
+              <BenchOcrTester />
             </OcrTestSection>
           </TabsContent>
 

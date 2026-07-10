@@ -420,6 +420,153 @@ class LocalReader:
             "variants": results,
         }
 
+    def read_bench(self, img: "Image.Image", debug: bool = False) -> dict:
+        """Bench OCR — yeşil HP bar tespiti (saf CV, Tesseract yok).
+
+        PLAN.md 15.5: Bench 9 slot, y=777. Her dolu slot yeşil [0,255,18] HP bar'ı gösterir.
+        Boş slot yeşil piksel içermez. "Bench okuma" = yeşil slotları say.
+
+        İki mod:
+        1. FIXED: 9 sabit koordinat, her slot için yeşil piksel sayısı.
+        2. AUTO: koordinat bağımsız — yeşil pikselleri x ekseninde kümele.
+
+        Args:
+            img: PIL Image, tam ekran görüntü (1920x1080 beklenir).
+            debug: True ise bench bandını + her slot crop'ını diske kaydet.
+
+        Returns:
+            {
+                "occupied_count": Optional[int],   # dolu slot sayısı
+                "occupied_indices": list[int],     # hangi slotlar dolu (0-8)
+                "best_variant": Optional[str],     # hangi yeşil threshold
+                "fixed": {...},                    # sabit koordinat sonuçları
+                "auto": {...},                     # auto-detect sonuçları
+            }
+        """
+        import numpy as _np
+
+        W, H = img.size
+        scale_x = W / 1920.0
+        scale_y = H / 1080.0
+
+        # Bench band (1920x1080 reference)
+        BENCH_Y_TOP_1080 = 770
+        BENCH_Y_BOTTOM_1080 = 845
+        BENCH_SLOT_W_1080 = 110
+        BENCH_FIRST_CX_1080 = 535
+
+        # Yeşil threshold varyantları (Node GREEN_VARIANTS ile senkron)
+        GREEN_VARIANTS = [
+            ("strict/255-0-18", 200, 80, 80),
+            ("mid/180-100-100", 180, 100, 100),
+            ("loose/150-130-130", 150, 130, 130),
+            ("very-loose/120-150-150", 120, 150, 150),
+        ]
+
+        def _count_green(crop_img, g_min, r_max, b_max):
+            arr = _np.array(crop_img.convert("RGB"))
+            r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+            mask = (g >= g_min) & (r <= r_max) & (b <= b_max)
+            return int(mask.sum())
+
+        # Occupied threshold: slot alanının ~2% yeşil
+        slot_area = BENCH_SLOT_W_1080 * (BENCH_Y_BOTTOM_1080 - BENCH_Y_TOP_1080)
+        slot_area_scaled = slot_area * scale_x * scale_y
+        occupied_threshold = max(20, int(slot_area_scaled * 0.02))
+
+        all_results = []
+        best_count = None
+        best_name = None
+
+        for name, g_min, r_max, b_max in GREEN_VARIANTS:
+            try:
+                # FIXED: 9 slot
+                centers = [BENCH_FIRST_CX_1080 + i * BENCH_SLOT_W_1080 for i in range(9)]
+                fixed_slots = []
+                occupied_indices = []
+                for i, cx in enumerate(centers):
+                    box = (
+                        int((cx - BENCH_SLOT_W_1080 / 2) * scale_x),
+                        int(BENCH_Y_TOP_1080 * scale_y),
+                        int((cx + BENCH_SLOT_W_1080 / 2) * scale_x),
+                        int(BENCH_Y_BOTTOM_1080 * scale_y),
+                    )
+                    crop = img.crop(box)
+                    green = _count_green(crop, g_min, r_max, b_max)
+                    occupied = green >= occupied_threshold
+                    fixed_slots.append({"index": i, "green": green, "occupied": occupied})
+                    if occupied:
+                        occupied_indices.append(i)
+
+                # AUTO: bench band'ı tarayıp yeşil kümeleri say
+                band_box = (
+                    int(480 * scale_x),
+                    int(BENCH_Y_TOP_1080 * scale_y),
+                    int(1476 * scale_x),
+                    int(BENCH_Y_BOTTOM_1080 * scale_y),
+                )
+                band = _np.array(img.crop(band_box).convert("RGB"))
+                r, g, b = band[:, :, 0], band[:, :, 1], band[:, :, 2]
+                green_mask = (g >= g_min) & (r <= r_max) & (b <= b_max)
+                # Sütun bazlı yeşil sayısı
+                col_green = green_mask.sum(axis=0)
+                # Komşu sütunları kümele (min 4px genişlik)
+                clusters = []
+                start = -1
+                for x in range(len(col_green) + 1):
+                    has = x < len(col_green) and col_green[x] > 0
+                    if has and start == -1:
+                        start = x
+                    elif not has and start != -1:
+                        if x - start >= 4:
+                            clusters.append((start + (x - start) // 2, x - start))
+                        start = -1
+
+                all_results.append({
+                    "variant": name,
+                    "fixed_slots": fixed_slots,
+                    "fixed_occupied": len(occupied_indices),
+                    "fixed_occupied_indices": occupied_indices,
+                    "auto_clusters": clusters,
+                    "auto_occupied": len(clusters),
+                    "error": None,
+                })
+
+                # Majority vote için count topla
+                if best_count is None:
+                    best_count = len(occupied_indices)
+                    best_name = name
+            except Exception as e:
+                if debug:
+                    print(f"  [bench-debug] {name} hata: {e}")
+                all_results.append({
+                    "variant": name,
+                    "error": str(e),
+                    "fixed_slots": [], "fixed_occupied": 0, "fixed_occupied_indices": [],
+                    "auto_clusters": [], "auto_occupied": 0,
+                })
+
+        if debug:
+            import os
+            debug_dir = "./debug-bench"
+            os.makedirs(debug_dir, exist_ok=True)
+            ts = int(time.time() * 1000) % 1_000_000_000
+            img.save(f"{debug_dir}/fullscreen_{ts}.png")
+            # Bench band crop
+            band_box = (
+                int(480 * scale_x), int(BENCH_Y_TOP_1080 * scale_y),
+                int(1476 * scale_x), int(BENCH_Y_BOTTOM_1080 * scale_y),
+            )
+            img.crop(band_box).save(f"{debug_dir}/bench_band_{ts}.png")
+            print(f"  [bench-debug] best: {best_name} → {best_count} dolu")
+
+        return {
+            "occupied_count": best_count,
+            "occupied_indices": all_results[0]["fixed_occupied_indices"] if all_results else [],
+            "best_variant": best_name,
+            "variants": all_results,
+        }
+
     def read_gold(self, img: "Image.Image", debug: bool = False) -> Optional[int]:
         """Tesseract ile gold oku.
 

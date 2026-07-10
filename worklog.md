@@ -5512,3 +5512,43 @@ Sıradaki adım (PLAN 15.5):
 - src/components/tft/round-ocr-tester.tsx — UI
 - src/components/tft/ocr-test-section.tsx — styled wrapper + roadmap
 - public/capture-client/local_reader.py — read_round_v2 metodu
+
+---
+Task ID: bench-cv-003
+Agent: Z.ai Code (main)
+Task: PLAN 15.5 sıradaki adım: Bench (kolay, ilk saf CV). Yeşil [0,255,18] HP bar tespiti, OCR yok. Kullanıcı onayı var ("onaylıyorum kanka"). HP sarı halka açıklaması düzeltildi (oyuncu işareti, HP sayısı ayrı). Sıra revize: Bench Shop'tan önce, Item Board'dan önce.
+
+Work Log:
+- PLAN.md 15.5 güncellendi: sıra revize edildi (Bench→3, Shop→4, Item→6 Board'dan önce). HP açıklaması düzeltildi (sarı halka = "hangisi sensin" işareti, kırmızı = diğerleri; HP sayısı ayrı OCR). Gold/Round/Bench ✅ işaretlendi.
+- src/lib/tft/ocr/bench-ocr.ts (yeni): Bench CV motoru. İki mod:
+  1. FIXED: 9 sabit koordinat (y=770-845, slot merkezleri x=535+110i), her slot için yeşil piksel sayısı. Occupied threshold = slot alanının %2'si.
+  2. AUTO: bench band'ı (480-1476 x, 770-845 y) tara, yeşil pikselleri x ekseninde kümele (min 4px genişlik). Her küme = 1 dolu slot. Koordinat bağımsız — çözünürlük/layout değişse çalışır.
+  4 yeşil threshold varyantı: strict (G>=200,R<=80,B<=80), mid (180,100,100), loose (150,130,130), very-loose (120,150,150). Majority vote ile best count.
+- src/app/api/bench-ocr-test/route.ts (yeni): POST endpoint, multipart + JSON.
+- src/app/api/bench-ocr-sample/route.ts (yeni): sentetik TFT bench screenshot. 9 slot, N tanesi dolu (yeşil HP bar + şampiyon silüeti + yıldız). ?occupied=N &seed=NN query param.
+- src/components/tft/bench-ocr-tester.tsx (yeni): UI. Upload + "Örnek görsel dene" (rastgele 1-7 dolu) + 9-slot grid (dolu slotlar yeşil vurgulu) + yeşil threshold varyant seçici + mod seçici (sabit/sabit+8px/auto-detect). emerald tema rengi.
+- src/components/tft/ocr-test-section.tsx: roadmap güncellendi — Bench artık adım 3 (active), Shop adım 4 (pending), Item adım 6 (Board'dan önce), HP adım 8. GripHorizontal icon eklendi.
+- src/app/page.tsx: BenchOcrTester OcrTestSection'a eklendi (Gold + Round + Bench sırası).
+- public/capture-client/local_reader.py: read_bench metodu eklendi (Node ile senkron, 4 yeşil varyant, fixed + auto mod, debug-bench/ klasörü). Python syntax OK.
+
+Stage Summary — Bench (ilk CV) TAMAM ve doğrulandı:
+- API testi: occupied=4 → "4 dolu slot" ✓, occupied=7 → "7" ✓, occupied=2 → "2" ✓. 4 yeşil varyantın hepsi tutarlı (strict/mid/loose/very-loose aynı sonucu verdi). Fixed + auto mod aynı sonucu verdi.
+- Browser testi: Setup tab → Bench "Örnek görsel dene" → "Bench'te 7 dolu slot" + "strict/255-0-18" varyantı. 9-slot grid render edildi, dolu slotlar yeşil vurgulu. Mod seçici (sabit/sabit+8px/auto-detect) çalışıyor. Konsol hatası yok.
+- VLM doğrulama: Adım 3 badge, "7 dolu slot", 9-slot grid (yeşil+boş), 3 mod seçici, 4 yeşil threshold seçici — hepsi göründü.
+- Auto mod koordinat bağımsız — kullanıcının çözünürlüğü 1920×1080 değilse bile yeşil kümeleri sayar (PLAN 15.6 risk 3'e yedek çözüm).
+
+Mevcut durum:
+- Gold OCR ✅, Round OCR ✅, Bench ✅ (sandbox doğrulandı, gerçek TFT bekleniyor)
+- Shop/Data Dragon/Item/Board/HP: sıradaki
+
+Sıradaki adım (PLAN 15.5 revize):
+- Adım 4: Shop OCR (orta) — 5 kart paralel OCR, fuzzy matching. Koordinatlar: (481, 1039, 1476, 1070). Türkçe client isim sorunu (whitelist + rapidfuzz ≥0.7).
+- VEYA: Kullanıcı gerçek TFT screenshot yükleyip Gold+Round+Bench doğrular.
+
+Önemli dosyalar bu round:
+- src/lib/tft/ocr/bench-ocr.ts — Bench CV motoru (fixed + auto)
+- src/app/api/bench-ocr-test/route.ts — test API
+- src/app/api/bench-ocr-sample/route.ts — sentetik sample
+- src/components/tft/bench-ocr-tester.tsx — UI
+- public/capture-client/local_reader.py — read_bench metodu
+- PLAN.md 15.5 — sıra revize + HP açıklaması düzeltildi

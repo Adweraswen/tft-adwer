@@ -10,7 +10,7 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ScanLine, CheckCircle2, Circle, Coins, Clock } from "lucide-react";
+import { ScanLine, CheckCircle2, Circle, Coins, Clock, GripHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 
 export interface OcrStep {
@@ -24,12 +24,12 @@ export interface OcrStep {
 const STEPS: OcrStep[] = [
   { id: 1, name: "Gold OCR", icon: <Coins className="h-3.5 w-3.5" />, status: "active", shortLabel: "Gold" },
   { id: 2, name: "Round OCR", icon: <Clock className="h-3.5 w-3.5" />, status: "active", shortLabel: "Round" },
-  { id: 3, name: "Shop OCR", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "Shop" },
-  { id: 4, name: "Bench", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "Bench" },
+  { id: 3, name: "Bench (CV)", icon: <GripHorizontal className="h-3.5 w-3.5" />, status: "active", shortLabel: "Bench" },
+  { id: 4, name: "Shop OCR", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "Shop" },
   { id: 5, name: "Data Dragon", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "Icons" },
-  { id: 6, name: "Board (ZOR)", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "Board" },
-  { id: 7, name: "HP 8 oyuncu (ZOR)", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "HP" },
-  { id: 8, name: "Item", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "Item" },
+  { id: 6, name: "Item", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "Item" },
+  { id: 7, name: "Board (ZOR)", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "Board" },
+  { id: 8, name: "HP 8 oyuncu (ZOR)", icon: <ScanLine className="h-3.5 w-3.5" />, status: "pending", shortLabel: "HP" },
 ];
 
 export function OcrTestSection({ children }: { children: ReactNode }) {

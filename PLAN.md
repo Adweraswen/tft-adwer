@@ -1008,15 +1008,17 @@ TFT-OCR-BOT (github.com/jfd02/TFT-OCR-BOT) kaynak kodundan ÇIKARILDI:
 
 ### 15.5 Uygulama Sırası
 
-1. **Gold OCR** (kolay) — TFT-OCR-BOT koordinatları: (870, 883, 920, 909), PSM7, digits, 3x scale
-2. **Round OCR** (kolay) — (753, 10, 870, 34), PSM7, "0123456789-"
-3. **Shop** (orta) — 5 kart paralel OCR, fuzzy matching
-4. **Bench** (kolay) — yeşil renk tespiti, OCR yok
+> **Sıra revize edildi (2026-07-10):** Bench Shop'tan önce (kolaydan zora), Item Board'dan önce (Board item'ları da okumalı). HP açıklaması düzeltildi (sarı halka = oyuncu işareti, HP sayısı ayrı OCR).
+
+1. **Gold OCR** (kolay) ✅ — TFT-OCR-BOT koordinatları: (870, 883, 920, 909), PSM7, digits, 3x scale
+2. **Round OCR** (kolay) ✅ — (753, 10, 870, 34), PSM7, "0123456789-"
+3. **Bench** (kolay, İLK CV) ✅ — yeşil [0,255,18] HP bar tespiti, OCR yok. İki mod: sabit 9 koordinat + auto-detect (koordinat bağımsız yeşil kümeleme).
+4. **Shop** (orta) — 5 kart paralel OCR, fuzzy matching (Türkçe client isim sorunu)
 5. **Data Dragon indirici** (orta) — şampiyon ikonları otomatik indir
-6. **Board kalibrasyonu** (ZOR) — 4 köşe hex + perspective transform
-7. **Board şampiyon tanıma** (ZOR) — template matching + OCR kombinasyonu
-8. **HP 8 oyuncu** (ZOR) — sarı halka tespiti + OCR
-9. **Item tanıma** (orta)
+6. **Item tanıma** (orta) — Board'dan ÖNCE, çünkü Board şampiyon tanıma item'ları da okumalı
+7. **Board kalibrasyonu** (ZOR) — 4 köşe hex + perspective transform + hex offset (çift/tek satır kayması)
+8. **Board şampiyon tanıma** (ZOR) — template matching + OCR kombinasyonu
+9. **HP 8 oyuncu** (ZOR) — **sarı halka = oyuncu işareti** (hangisi sensin), kırmızı = diğerleri. HP sayısı ayrı OCR. Sarı halka → o oyuncunun HP'sini oku.
 10. **Cache/paralel optimizasyonu** — <500ms hedef
 11. **Patch pipeline** — Data Dragon otomatik güncelleme, ~2 saat/patch
 
