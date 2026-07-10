@@ -42,18 +42,19 @@ function benchSlotBbox(centerX: number, yTop: number, slotWidth: number): [numbe
   return [centerX - half, yTop, centerX + half, BENCH_Y_BOTTOM];
 }
 
-// ─── Occupancy variants (std-dev) ─────────────────────────────────────────
-// Gerçek TFT: dolu std=57-66, boş std=34-41. Eşik 48 = en güvenli ayrım.
+// ─── Occupancy variants (std-dev + edge density) ──────────────────────────
+// GERÇEK TFT VERİSİ: edge≥0.03 AND std≥25 = sc32(7), sc33(5) doğru
 export interface OccupancyVariant {
   name: string;
   stdThreshold: number;
+  edgeThreshold: number;
 }
 
 export const OCCUPANCY_VARIANTS: OccupancyVariant[] = [
-  { name: "std30", stdThreshold: 30 },  // gerçek TFT: dolu σ=35-43, boş σ=11-27
-  { name: "std28", stdThreshold: 28 },  // biraz gevşek
-  { name: "std32", stdThreshold: 32 },  // biraz sıkı
-  { name: "std25", stdThreshold: 25 },  // çok gevşek
+  { name: "edge03-std25", stdThreshold: 25, edgeThreshold: 0.03 },  // en iyi (sc32=7, sc33=5)
+  { name: "edge04-std25", stdThreshold: 25, edgeThreshold: 0.04 },  // biraz sıkı edge
+  { name: "edge03-std20", stdThreshold: 20, edgeThreshold: 0.03 },  // gevşek std
+  { name: "edge05-std30", stdThreshold: 30, edgeThreshold: 0.05 },  // sıkı ikisi
 ];
 
 // ─── Result types ─────────────────────────────────────────────────────────
@@ -105,13 +106,17 @@ export interface BenchOcrResult {
   error: string | null;
 }
 
-// ─── Luminance std-dev ────────────────────────────────────────────────────
-interface LumStats {
-  std: number;
-  mean: number;
+// ─── Slot stats: std-dev + edge density ───────────────────────────────────
+// GERÇEK TFT VERİSİ (sc32=7, sc33=5 doğru):
+//   edge≥0.03 AND std_lum≥25 = en iyi kombinasyon
+//   Dolu slot: edge yüksek (portre detayı), std_lum yüksek (renk çeşitliliği)
+//   Boş slot: edge düşük (monoton mor), std_lum düşük
+interface SlotStats {
+  stdDev: number;
+  edgeDensity: number;
 }
 
-async function computeLumStats(pngBuf: Buffer, region: { left: number; top: number; width: number; height: number }): Promise<LumStats> {
+async function computeSlotStats(pngBuf: Buffer, region: { left: number; top: number; width: number; height: number }): Promise<SlotStats> {
   const raw = await sharp(pngBuf)
     .extract({ left: region.left, top: region.top, width: region.width, height: region.height })
     .ensureAlpha()
@@ -119,6 +124,8 @@ async function computeLumStats(pngBuf: Buffer, region: { left: number; top: numb
     .toBuffer();
 
   const channels = 4;
+  const W = region.width;
+  const H = region.height;
   const total = raw.length / channels;
   const lums = new Float64Array(total);
   let sum = 0;
@@ -133,7 +140,27 @@ async function computeLumStats(pngBuf: Buffer, region: { left: number; top: numb
     const d = lums[p] - mean;
     varSum += d * d;
   }
-  return { std: Math.sqrt(varSum / total), mean };
+  const std = Math.sqrt(varSum / total);
+
+  // Edge density: yatay + dikey gradient, threshold > 30
+  let edgeCount = 0;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W - 1; x++) {
+      const idx = (y * W + x) * channels;
+      const lum1 = lums[y * W + x];
+      const lum2 = lums[y * W + x + 1];
+      if (Math.abs(lum1 - lum2) > 30) edgeCount++;
+    }
+  }
+  for (let y = 0; y < H - 1; y++) {
+    for (let x = 0; x < W; x++) {
+      const lum1 = lums[y * W + x];
+      const lum2 = lums[(y + 1) * W + x];
+      if (Math.abs(lum1 - lum2) > 30) edgeCount++;
+    }
+  }
+  const edgeDensity = edgeCount / total;
+  return { stdDev: std, edgeDensity };
 }
 
 // ─── Slot cache (optimized) ──────────────────────────────────────────────
@@ -141,6 +168,7 @@ interface SlotCache {
   index: number;
   bbox: [number, number, number, number];
   stdDev: number;
+  edgeDensity: number;
   cropB64: string;
 }
 
@@ -155,12 +183,13 @@ async function computeSlotCache(
   for (let i = 0; i < 9; i++) {
     const bbox1080 = benchSlotBbox(centers[i], BENCH_Y_TOP, coordSet.slotWidth);
     const region = scaleBbox(bbox1080, imgW, imgH);
-    const stats = await computeLumStats(pngBuf, region);
+    const stats = await computeSlotStats(pngBuf, region);
     const cropPng = await cropRegion(pngBuf, region);
     caches.push({
       index: i,
       bbox: bbox1080,
-      stdDev: stats.std,
+      stdDev: stats.stdDev,
+      edgeDensity: stats.edgeDensity,
       cropB64: `data:image/png;base64,${cropPng.toString("base64")}`,
     });
   }
@@ -175,7 +204,8 @@ function buildFixedResult(
   const slots: BenchSlotResult[] = [];
   const occupiedIndices: number[] = [];
   for (const c of cache) {
-    const occupied = c.stdDev >= variant.stdThreshold;
+    // Occupied: edge density yüksek AND std-dev yeterli
+    const occupied = c.edgeDensity >= variant.edgeThreshold && c.stdDev >= variant.stdThreshold;
     slots.push({
       index: c.index,
       bbox: c.bbox,

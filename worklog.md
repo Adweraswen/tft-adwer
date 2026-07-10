@@ -5890,3 +5890,38 @@ Stage Summary — GERÇEK TFT'DE DOĞRULANDI:
 - Yeşil [0,255,18] gerçek TFT'de yok, std-dev yöntemi çalışıyor.
 
 Kullanıcıya: Bench artık GERÇEK TFT verisiyle çalışıyor. 3 screenshot'ta da doğru dolu slot sayısı. std-dev yöntemi (yeşil değil), y=650-757 (TFT-OCR-BOT koordinatları), threshold=30.
+
+---
+Task ID: bench-edge-density-fix-016
+Agent: Z.ai Code (main)
+Task: Kullanıcı: "sadece sc 33 doğru, 34 ve 32 yanlış, 34te 4 tane var, 32de 7 tane var, testi sen de yapabiliyormuşsun, 3 screenshotın da hepsi doğru olana kadar deneme yanılma yap". Gerçek TFT screenshot'larında pixel-level analiz + VLM ground truth + metrics deneme.
+
+Work Log — GERÇEK TFT GROUND TRUTH (VLM + user):
+- sc32: 7 dolu (slot 1,2,3,4,5,8,9) — VLM ile doğrulandı
+- sc33: 5 dolu (slot 1,2,3,4,5) — VLM ile doğrulandı
+- sc34: 4 dolu (slot 1,2,8,9) — user cevabı (VLM 5 dedi, slot 5 belirsiz)
+
+Metrics deneme (pixel-level analiz):
+1. std-dev luminance tek başına: sc32 yanlış (slot 8,9 σ=26,36 düşük), sc34 yanlış (slot 3,4,5,6 mor yüksek σ)
+2. saturation: işe yaramadı (tüm slotlar yüksek saturation)
+3. colorful ratio (mor+beyaz+siyah değil): sc32 doğru ama sc33 yanlış
+4. edge density (gradient > 30): sc34'de mor boş slotlar da yüksek edge
+5. **edge density + std-dev KOMBİNASYONU**: BREAKTHROUGH!
+   - edge≥0.03 AND std_lum≥25 = sc32(7)✓, sc33(5)✓, sc34(4)✓
+
+Neden çalışıyor:
+- Dolu slot: portre detayı = yüksek edge + yüksek std (renk çeşitliliği)
+- Boş slot: monoton mor arka plan = düşük edge + düşük std
+- sc34'de mor boş slotların yüksek edge'i var ama std düşük (monoton mor) → AND koşulu eler
+
+Yapılan değişiklikler:
+- bench-ocr.ts: computeSlotStats std-dev + edge density hesaplar. OccupancyVariant'a edgeThreshold eklendi. buildFixedResult: occupied = edge≥thr AND std≥thr. OCCUPANCY_VARIANTS: edge03-std25 (en iyi), edge04-std25, edge03-std20, edge05-std30.
+- bench-ocr-tester UI: zaten std-dev gösteriyordu, çalışıyor.
+
+Stage Summary — 3/3 GERÇEK TFT SCREENSHOT DOĞRU:
+- sc32: edge03-std25 = 7/9 ✓ (user: 7)
+- sc33: edge03-std25 = 5/9 ✓ (user: 5)
+- sc34: edge03-std25 = 4/9 ✓ (user: 4)
+- edge≥0.03 AND std≥25 kombinasyonu dolu/boş ayrımını çözüyor.
+
+Kullanıcıya: Bench artık 3 gerçek TFT screenshot'ında da TAM DOĞRU. edge density + std-dev kombinasyonu. Tekrar test et, hepsi doğru olmalı.
