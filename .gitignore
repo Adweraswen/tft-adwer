@@ -52,3 +52,13 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# OCR debug output (test artifacts, regenerated each run)
+debug-gold/
+debug-round/
+debug-shop/
+debug-bench/
+
+# Prisma SQLite database
+db/*.db
+db/*.db-journal

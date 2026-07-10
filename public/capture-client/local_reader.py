@@ -315,6 +315,111 @@ class LocalReader:
 
         return {"gold": best_gold, "best_variant": best_name, "variants": results}
 
+    def read_round_v2(self, img: "Image.Image", debug: bool = False) -> dict:
+        """Round OCR — çoklu varyant dener, en iyi sonucu seçer.
+
+        PLAN.md 15.5: TFT-OCR-BOT koordinatları (753, 10, 870, 34).
+        Stage-round göstergesi "3-2" gibi beyaz text, üst-ortada.
+        PSM7, "0123456789-" whitelist.
+
+        Args:
+            img: PIL Image, tam ekran görüntü (1920x1080 beklenir).
+            debug: True ise her varyantın raw + processed görüntüsünü diske kaydet.
+
+        Returns:
+            {
+                "round": Optional[str],       # "3-2" gibi, veya None
+                "stage": Optional[int],       # 3
+                "round_num": Optional[int],   # 2
+                "best_variant": Optional[str],
+                "variants": [{"name", "round", "stage", "round_num", "raw_ocr"}],
+            }
+        """
+        if not TESSERACT_AVAILABLE:
+            return {"round": None, "stage": None, "round_num": None, "best_variant": None, "variants": [], "error": "tesseract yok"}
+
+        W, H = img.size
+        scale_x = W / 1920.0
+        scale_y = H / 1080.0
+
+        results = []
+        best_round = None
+        best_stage = None
+        best_round_num = None
+        best_name = None
+
+        for name, bbox, threshold, scale, psm in ROUND_VARIANTS:
+            box = (
+                int(bbox[0] * scale_x),
+                int(bbox[1] * scale_y),
+                int(bbox[2] * scale_x),
+                int(bbox[3] * scale_y),
+            )
+            try:
+                crop = img.crop(box)
+                processed = self._process_gold_crop(crop, threshold, scale)
+
+                if debug:
+                    import os
+                    debug_dir = "./debug-round"
+                    os.makedirs(debug_dir, exist_ok=True)
+                    ts = int(time.time() * 1000) % 1_000_000_000
+                    safe = name.replace("/", "_")
+                    crop.save(f"{debug_dir}/round_raw_{safe}_{ts}.png")
+                    processed.save(f"{debug_dir}/round_processed_{safe}_{ts}.png")
+
+                raw = pytesseract.image_to_string(
+                    processed,
+                    config=f"--psm {psm} -c tessedit_char_whitelist={ROUND_WHITELIST}",
+                ).strip()
+
+                # "3-2" → stage=3, round=2. Sanity: stage 1-11, round 1-7.
+                import re as _re
+                m = _re.search(r"(\d{1,2})\s*[-–—]\s*(\d{1,2})", raw)
+                parsed = None
+                if m:
+                    s = int(m.group(1))
+                    r = int(m.group(2))
+                    if 1 <= s <= 11 and 1 <= r <= 7:
+                        parsed = (s, r)
+
+                round_str = f"{parsed[0]}-{parsed[1]}" if parsed else None
+                results.append({
+                    "name": name,
+                    "round": round_str,
+                    "stage": parsed[0] if parsed else None,
+                    "round_num": parsed[1] if parsed else None,
+                    "raw_ocr": raw,
+                })
+
+                if parsed and best_round is None:
+                    best_round = round_str
+                    best_stage = parsed[0]
+                    best_round_num = parsed[1]
+                    best_name = name
+            except Exception as e:
+                if debug:
+                    print(f"  [round-debug] {name} hata: {e}")
+                results.append({"name": name, "round": None, "stage": None, "round_num": None, "raw_ocr": f"ERR: {e}"})
+
+        if debug:
+            import os
+            debug_dir = "./debug-round"
+            os.makedirs(debug_dir, exist_ok=True)
+            ts = int(time.time() * 1000) % 1_000_000_000
+            img.save(f"{debug_dir}/fullscreen_{ts}.png")
+            print(f"  [round-debug] best: {best_name} → {best_round}")
+            for r in results:
+                print(f"  [round-debug] {r['name']}: raw='{r['raw_ocr']}' round={r['round']}")
+
+        return {
+            "round": best_round,
+            "stage": best_stage,
+            "round_num": best_round_num,
+            "best_variant": best_name,
+            "variants": results,
+        }
+
     def read_gold(self, img: "Image.Image", debug: bool = False) -> Optional[int]:
         """Tesseract ile gold oku.
 
