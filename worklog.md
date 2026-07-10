@@ -5768,3 +5768,23 @@ Stage Summary:
 - Bench API 1.1 saniyede dönüyor (HTTP 502 yok).
 
 Kullanıcıya: Bench'i tekrar test et. Sabit koordinat modunda E-429-115 setini dene (senin ölçümün). Auto-detect cluster birleştirme ile daha az küme görmelisin.
+
+---
+Task ID: bench-y-fix-coord-e2-011
+Agent: Z.ai Code (main)
+Task: Kullanıcı feedback: (1) Sabit koordinat E-429-115 ilk slotu kapsıyor ama 6-9. slot kayıyor (6-7 az sağa, 8-9 2 tık sağa), (2) "en alt çizgiyi gösteriyor" — crop gölgeyi değil bench panel alt border'ını yakalıyor, (3) auto-detect 169px cluster = 2 slot birleşmiş, cluster birleştirme çok agresif.
+
+Work Log:
+- Y aralığı düzeltme: BENCH_Y_TOP 770→745, BENCH_Y_BOTTOM 875→830. Crop artık portre bölgesi (85px), gölge/alt border değil. BENCH_Y_TOP_SHORT 780→760.
+- Koordinat seti E2: width 115→118 (6-9. slot kayması düzeltme). firstCenter=429 aynı. 9 slot: 429, 547, 665, 783, 901, 1019, 1137, 1255, 1373. 8-9. slot +20px sağa gelir.
+- bench-ocr-sample: y=745-830, width=118 (senkron).
+- Auto-detect cluster düzeltme:
+  - MERGE_GAP 46→20px (çok agresif birleştirmeyi azalt).
+  - MAX_CLUSTER_WIDTH = slot genişliği × 1.5 (~177px). Daha büyük cluster'ı ortasından böl (2 slot olduğunu varsay).
+  - 4 aşama: ham kümeleri topla → yakınları birleştir (20px) → büyükleri böl (177px+) → küçükleri filtrele (15px).
+  - Önceki: 169px tek cluster (2 slot). Şimdi: 94px cluster'lar (1 slot), bölme çalışıyor.
+
+Stage Summary:
+- E2-429-118: sandbox'ta 4/9 doğru. Y aralığı 745-830 (portre, gölge değil).
+- Auto-detect: 7 küme → 3 küme (94px width, mantıklı). 169px cluster artık bölünüyor.
+- Kullanıcıya: Sabit koordinat modunda E2-429-118 dene. Y aralığı daraldı, artık alt çizgi değil portre görmeli.

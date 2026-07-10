@@ -30,12 +30,12 @@ import {
 //
 // NOT: auto-detect modu koordinat bağımsız — sabit koordinatlar yanlış olsa bile
 // yeşil/std kümelerini sayar. Gerçek TFT'de auto'yu kullan.
-// Y aralığı: kullanıcı ~105px dikey uzunluk ölçtü. Bench y≈770-875 (105px).
-// Eski: y=720-845 (125px, çok geniş). Yeni: y=770-875 (105px, kullanıcı ölçümü).
-// Wide variant: y=750-875 (125px, biraz daha geniş — gölge yakala).
-const BENCH_Y_TOP = 770;          // kullanıcı ölçümü (105px)
-const BENCH_Y_BOTTOM = 875;
-const BENCH_Y_TOP_SHORT = 780;    // kısa variant (95px, sadece portre)
+// Y aralığı: kullanıcı "en alt çizgiyi gösteriyor" dedi — crop çok aşağı uzanıyor,
+// portre değil bench panelinin alt border'ını yakalıyordu. y_bottom 875→830 çek
+// (sadece portre, gölge değil). y_top 770→745 (85px, kompakt portre).
+const BENCH_Y_TOP = 745;          // portre başı
+const BENCH_Y_BOTTOM = 830;       // portre sonu (alt border değil)
+const BENCH_Y_TOP_SHORT = 760;    // kısa variant (sadece portre ortası, 70px)
 
 // Koordinat seti varyantları: (isim, ilkSlotMerkez, slotGenişlik)
 interface BenchCoordSet {
@@ -45,16 +45,16 @@ interface BenchCoordSet {
 }
 
 const BENCH_COORD_SETS: BenchCoordSet[] = [
-  // Set E: KULLANICI ÖLÇÜMÜ (2026-07-10) — ilk slot x=371-486, 115px genişlik, y~105px.
-  // firstCenter = 371 + 115/2 = 428.5 → 429. En güvenilir set.
-  { name: "E-429-115", firstCenter: 429, slotWidth: 115 },
-  // Set A: eski tahmin (535, 110)
+  // Set E2: KULLANICI ÖLÇÜMÜ v2 (2026-07-10) — 6-9. slot kayması için width 115→118.
+  // firstCenter=429 (371+58), width=118. 9 slot: 429, 547, 665, 783, 901, 1019, 1137, 1255, 1373.
+  // 6-7. slot +10px, 8-9. slot +20px sağa gelir (linear kayma düzeltme).
+  { name: "E2-429-118", firstCenter: 429, slotWidth: 118 },
+  // Set E1: orijinal kullanıcı ölçümü (115px)
+  { name: "E1-429-115", firstCenter: 429, slotWidth: 115 },
+  // Set A-F: eski tahminler (fallback)
   { name: "A-535-110", firstCenter: 535, slotWidth: 110 },
-  // Set B: biraz sola kaydır (515, 110)
   { name: "B-515-110", firstCenter: 515, slotWidth: 110 },
-  // Set C: daha dar slotlar (100px)
   { name: "C-525-100", firstCenter: 525, slotWidth: 100 },
-  // Set D: TFT-OCR-BOT'a göre (490, 110)
   { name: "D-490-110", firstCenter: 490, slotWidth: 110 },
 ];
 
@@ -311,13 +311,16 @@ function buildAutoResult(
   variant: OccupancyVariant
 ): BenchAutoResult {
   const { bandLeft, bandWidth, colStd } = cache;
-  const MIN_WIDTH = 8;
   const scaleX = imgW / 1920;
   const slotWidthImg = BENCH_COORD_SETS[0].slotWidth * scaleX;
-  // Cluster birleştirme: iki cluster arası boşluk slot genişliğinin yarısından azsa birleştir.
-  const MERGE_GAP = Math.floor(slotWidthImg * 0.4); // ~46px @ 1920
+  // Cluster birleştirme: gap < 20px ise birleştir (çok yakın parçalar).
+  // Önceki 46px çok agresifti — 2 slot tek cluster oluyordu (169px).
+  const MERGE_GAP = 20;
   // Çok küçük kümeleri filtrele (noise).
   const NOISE_WIDTH = 15;
+  // Max cluster width: 1 slot'tan çok büyükse (1.5× = ~177px), muhtemelen 2 slot birleşmiş.
+  // Bu cluster'ı ikiye böl (ortasından).
+  const MAX_CLUSTER_WIDTH = Math.floor(slotWidthImg * 1.5);
 
   // 1. Ham kümeleri topla
   const rawClusters: { start: number; end: number; stdSum: number }[] = [];
@@ -342,7 +345,6 @@ function buildAutoResult(
   for (const rc of rawClusters) {
     const last = merged[merged.length - 1];
     if (last && rc.start - last.end < MERGE_GAP) {
-      // Birleştir
       last.end = rc.end;
       last.stdSum += rc.stdSum;
     } else {
@@ -350,10 +352,24 @@ function buildAutoResult(
     }
   }
 
-  // 3. Çok küçük kümeleri filtrele + slot map
+  // 3. Çok büyük kümeleri böl (max 1.5 slot genişliği)
+  const split: { start: number; end: number; stdSum: number }[] = [];
+  for (const mc of merged) {
+    const width = mc.end - mc.start;
+    if (width > MAX_CLUSTER_WIDTH) {
+      // Ortasından böl — 2 slot olduğunu varsay
+      const mid = Math.floor((mc.start + mc.end) / 2);
+      split.push({ start: mc.start, end: mid, stdSum: mc.stdSum / 2 });
+      split.push({ start: mid, end: mc.end, stdSum: mc.stdSum / 2 });
+    } else {
+      split.push(mc);
+    }
+  }
+
+  // 4. Çok küçük kümeleri filtrele + slot map
   const centers1080 = benchSlotCenters(BENCH_COORD_SETS[0]);
   const clusters: BenchAutoCluster[] = [];
-  for (const mc of merged) {
+  for (const mc of split) {
     const width = mc.end - mc.start;
     if (width < NOISE_WIDTH) continue;
     const centerXImg = bandLeft + mc.start + Math.floor(width / 2);

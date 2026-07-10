@@ -18,9 +18,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Bench geometry — must match bench-ocr.ts constants.
-const BENCH_Y_TOP = 770;
-const BENCH_Y_BOTTOM = 875;
-const BENCH_SLOT_WIDTH = 115;
+const BENCH_Y_TOP = 745;
+const BENCH_Y_BOTTOM = 830;
+const BENCH_SLOT_WIDTH = 118;
 const BENCH_FIRST_SLOT_CENTER = 429;
 
 // Green HP bar color (kept for backwards compat but no longer the primary signal).
