@@ -18,10 +18,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Bench geometry — must match bench-ocr.ts constants.
-const BENCH_Y_TOP = 745;
-const BENCH_Y_BOTTOM = 830;
+const BENCH_Y_TOP = 700;
+const BENCH_Y_BOTTOM = 880;
 const BENCH_SLOT_WIDTH = 118;
 const BENCH_FIRST_SLOT_CENTER = 429;
+// Health bar y konumu (upper candidate ile senkron: y=735-760)
+const HEALTH_BAR_Y_TOP = 735;
+const HEALTH_BAR_Y_BOTTOM = 760;
 
 // Green HP bar color (kept for backwards compat but no longer the primary signal).
 const GREEN = "#00ff12";
@@ -66,24 +69,11 @@ export async function GET(req: NextRequest) {
     slotEls.push(`<rect x="${left}" y="${top}" width="${width}" height="${height}" rx="3" fill="#0d1525" stroke="#1f2d44" stroke-width="1"/>`);
 
     if (occupiedSet.has(i)) {
-      // GREEN HEALTH BAR — şampiyon kafasının ÜSTÜNDE (TFT-OCR-BOT [0,255,18]).
-      // Dolu slot = yeşil health bar üstte. Boş slot = yeşil yok.
-      // Health bar: y=745-770 (25px bant), slot genişliğinde %70.
-      const hpBarY = top + 2;
-      const hpBarH = 8;
-      const hpBarW = Math.floor(width * 0.7);
-      const hpBarX = left + Math.floor((width - hpBarW) / 2);
-      // Bar background (dark).
-      slotEls.push(`<rect x="${hpBarX}" y="${hpBarY}" width="${hpBarW}" height="${hpBarH}" rx="1" fill="#0a1018"/>`);
-      // Green fill (TFT-OCR-BOT [0,255,18]). Random 40-100% HP.
-      const hpPct = 0.4 + rand() * 0.6;
-      slotEls.push(`<rect x="${hpBarX}" y="${hpBarY}" width="${Math.floor(hpBarW * hpPct)}" height="${hpBarH}" fill="#00ff12"/>`);
-
-      // Champion "portrait" — body + head (slotun alt kısmı).
+      // Champion "portrait" ÖNCE çiz (body + head), sonra health bar ÜZERİNE.
       const hue1 = Math.floor(rand() * 360);
       const hue2 = (hue1 + 120 + Math.floor(rand() * 60)) % 360;
       const hue3 = (hue1 + 240 + Math.floor(rand() * 60)) % 360;
-      // Body (large rect, main color).
+      // Body (large rect, main color) — slotun alt kısmı.
       slotEls.push(`<rect x="${left + 8}" y="${top + 20}" width="${width - 16}" height="${height - 28}" rx="4" fill="hsl(${hue1}, 55%, 40%)" stroke="hsl(${hue1}, 60%, 55%)" stroke-width="1"/>`);
       // Head (circle, contrasting color).
       slotEls.push(`<circle cx="${left + width / 2}" cy="${top + height / 2 + 6}" r="${Math.floor(width * 0.18)}" fill="hsl(${hue2}, 60%, 55%)"/>`);
@@ -94,6 +84,17 @@ export async function GET(req: NextRequest) {
       for (let st = 0; st < stars; st++) {
         slotEls.push(`<circle cx="${left + 12 + st * 8}" cy="${top + height - 6}" r="2" fill="#ffd700"/>`);
       }
+
+      // GREEN HEALTH BAR — şampiyon kafasının ÜSTÜNDE, body'den SONRA çiz (üzerine).
+      const hpBarY = top + 8;
+      const hpBarH = 12;
+      const hpBarW = Math.floor(width * 0.7);
+      const hpBarX = left + Math.floor((width - hpBarW) / 2);
+      // Bar background (dark).
+      slotEls.push(`<rect x="${hpBarX}" y="${hpBarY}" width="${hpBarW}" height="${hpBarH}" rx="1" fill="#0a1018"/>`);
+      // Green fill (TFT-OCR-BOT [0,255,18]). Random 40-100% HP.
+      const hpPct = 0.4 + rand() * 0.6;
+      slotEls.push(`<rect x="${hpBarX}" y="${hpBarY}" width="${Math.floor(hpBarW * hpPct)}" height="${hpBarH}" fill="#00ff12"/>`);
     }
   }
 
@@ -106,7 +107,7 @@ export async function GET(req: NextRequest) {
     noise += `<rect x="${x}" y="${y}" width="2" height="2" fill="#ffffff" opacity="${a}"/>`;
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${bg}${benchPanel}${slotEls.join("")}${noise}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${bg}${benchPanel}${slotEls.join("")}${noise}</svg>`;
 
   const png = await sharp(Buffer.from(svg)).png().toBuffer();
 

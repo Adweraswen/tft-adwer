@@ -24,24 +24,25 @@ import {
 } from "./engine";
 
 // ─── Bench slot coordinates (1920x1080 reference) ──────────────────────────
-// YÖNTEM DEĞİŞİKLİĞİ (2026-07-10, TFTSense/TFT-OCR-BOT araştırması sonrası):
-// std-dev → tam RGB yeşil [0,255,18] health bar tespiti.
-// Kullanıcı: "kafalarının da üstünde can barları" — health bar slotun ALTINDA değil,
-// şampiyonun KAFASININ ÜSTÜNDE. Y aralığı artık health bar bölgesi.
+// YÖNTEM: tam RGB yeşil [0,255,18] health bar tespiti (TFT-OCR-BOT).
+// Health bar konumu TAM BİLİNMİYOR — kullanıcı "kafalarının üstünde" dedi ama
+// tam y ölçmedi. Bu yüzden 4 farklı y bandı taranır, en yüksek yeşil olanı kullanılır.
 //
 // TFT-OCR-BOT production kodu (arena_functions.py, bench_occupied_check):
-//   is_health_color = np.all(screenshot == [0, 255, 18], axis=-1)  # tam RGB match
+//   is_health_color = np.all(screenshot == [0, 255, 18], axis=-1)
 //   occupied = any(np.convolve(is_health_color, np.ones(5), mode='valid'))
-// convolve(window=5) → contiguous yeşil piksel şeridi ister (tek-piksel noise eler).
-//
-// Health bar konumu: şampiyon kafasının üstü = slotun ÜST kısmı.
-// Bench slot y aralığı ~745-875 (130px). Health bar üst ~20px'lik bant (y=745-765).
-const BENCH_Y_TOP = 745;          // slot başı (health bar üst kenarı)
-const BENCH_Y_BOTTOM = 875;       // slot sonu
-// Health bar sub-region (şampiyon kafasının üstü) — yeşil tespiti sadece burada.
-const HEALTH_BAR_Y_TOP = 745;     // health bar üst
-const HEALTH_BAR_Y_BOTTOM = 770;  // health bar alt (25px bant)
-const BENCH_Y_TOP_SHORT = 760;    // kısa variant (portre ortası)
+const BENCH_Y_TOP = 700;          // slot başı (geniş aralık)
+const BENCH_Y_BOTTOM = 880;       // slot sonu
+const BENCH_Y_TOP_SHORT = 760;    // kısa variant
+
+// 4 farklı health bar adayı y bandı — hangisinde yeşil varsa onu kullan.
+// Kullanıcı gerçek TFT'de tam konumu ölçene kadar hepsi taranır.
+const HEALTH_BAR_CANDIDATES: { name: string; yTop: number; yBottom: number }[] = [
+  { name: "top", yTop: 700, yBottom: 725 },      // slotun en üstü
+  { name: "upper", yTop: 735, yBottom: 760 },    // üst-orta
+  { name: "middle", yTop: 760, yBottom: 785 },   // orta (kafa üstü tahmini)
+  { name: "lower", yTop: 790, yBottom: 815 },    // orta-alt
+];
 
 // Koordinat seti varyantları: (isim, ilkSlotMerkez, slotGenişlik)
 interface BenchCoordSet {
@@ -72,10 +73,10 @@ function benchSlotBbox(centerX: number, yTop: number, slotWidth: number): [numbe
   return [centerX - half, yTop, centerX + half, BENCH_Y_BOTTOM];
 }
 
-// Health bar sub-region bbox (yeşil tespiti için, slotun üstü)
-function healthBarBbox(centerX: number, slotWidth: number): [number, number, number, number] {
+// Health bar sub-region bbox (yeşil tespiti için, aday y bandı)
+function healthBarBbox(centerX: number, slotWidth: number, candidate: { yTop: number; yBottom: number }): [number, number, number, number] {
   const half = Math.floor(slotWidth / 2);
-  return [centerX - half, HEALTH_BAR_Y_TOP, centerX + half, HEALTH_BAR_Y_BOTTOM];
+  return [centerX - half, candidate.yTop, centerX + half, candidate.yBottom];
 }
 
 // ─── Occupancy detection variants (health bar yeşil) ──────────────────────
@@ -220,10 +221,12 @@ async function countHealthBarGreen(
 interface SlotCache {
   index: number;
   bbox: [number, number, number, number];
-  greenPixelCount: number;  // tam tolerance=0 match
-  greenPixelCountTol10: number; // tolerance=10 match (anti-aliasing)
-  contiguousGreen: number;  // en uzun contiguous yeşil (tol=0)
+  greenPixelCount: number;  // en iyi candidate'nin tam match
+  greenPixelCountTol10: number; // en iyi candidate'nin tol=10 match
+  contiguousGreen: number;
   contiguousGreenTol10: number;
+  /** Hangi y bandında yeşil bulundu (debug için). */
+  bestCandidate: string;
   cropB64: string;
 }
 
@@ -237,13 +240,30 @@ async function computeSlotCache(
   const centers = benchSlotCenters(coordSet);
   const caches: SlotCache[] = [];
   for (let i = 0; i < 9; i++) {
-    // Health bar sub-region (slotun üstü, şampiyon kafasının üstü)
-    const hbBbox1080 = healthBarBbox(centers[i], coordSet.slotWidth);
-    const hbRegion = scaleBbox(hbBbox1080, imgW, imgH);
-    // Tam match (tol=0)
-    const stats0 = await countHealthBarGreen(pngBuf, hbRegion, 0, 5);
-    // Toleranslı match (tol=10, anti-aliasing)
-    const stats10 = await countHealthBarGreen(pngBuf, hbRegion, 10, 5);
+    // 4 candidate y bandını tara, en yüksek yeşil olanı seç
+    let best = {
+      greenPixelCount: 0,
+      greenPixelCountTol10: 0,
+      contiguousGreen: 0,
+      contiguousGreenTol10: 0,
+      bestCandidate: "none",
+    };
+    for (const cand of HEALTH_BAR_CANDIDATES) {
+      const hbBbox1080 = healthBarBbox(centers[i], coordSet.slotWidth, cand);
+      const hbRegion = scaleBbox(hbBbox1080, imgW, imgH);
+      const stats0 = await countHealthBarGreen(pngBuf, hbRegion, 0, 5);
+      const stats10 = await countHealthBarGreen(pngBuf, hbRegion, 10, 5);
+      // En yüksek yeşil piksel sayısı olan candidate'i seç
+      if (stats0.greenPixelCount > best.greenPixelCount) {
+        best = {
+          greenPixelCount: stats0.greenPixelCount,
+          greenPixelCountTol10: stats10.greenPixelCount,
+          contiguousGreen: stats0.contiguousGreen,
+          contiguousGreenTol10: stats10.contiguousGreen,
+          bestCandidate: cand.name,
+        };
+      }
+    }
     // Slot crop (görsel için, tüm slot)
     const slotBbox1080 = benchSlotBbox(centers[i], yTop, coordSet.slotWidth);
     const slotRegion = scaleBbox(slotBbox1080, imgW, imgH);
@@ -251,10 +271,7 @@ async function computeSlotCache(
     caches.push({
       index: i,
       bbox: slotBbox1080,
-      greenPixelCount: stats0.greenPixelCount,
-      greenPixelCountTol10: stats10.greenPixelCount,
-      contiguousGreen: stats0.contiguousGreen,
-      contiguousGreenTol10: stats10.contiguousGreen,
+      ...best,
       cropB64: `data:image/png;base64,${cropPng.toString("base64")}`,
     });
   }
@@ -297,8 +314,9 @@ function buildFixedResult(
   };
 }
 
-// ─── Auto-detect mode (yeşil health bar) ──────────────────────────────────
-// Health bar band'ı (y=745-770) tara, yeşil pikselleri x ekseninde kümele.
+// ─── Auto-detect mode (yeşil health bar, tüm slot yüksekliği) ─────────────
+// TÜM slot yüksekliğini tara (y=700-880), yeşil pikselleri x ekseninde kümele.
+// Health bar tam konumu bilinmediği için geniş aralık taranır.
 // Her küme = 1 dolu slot. std-dev değil, tam RGB yeşil tespiti.
 
 interface AutoBandCache {
@@ -315,9 +333,9 @@ async function computeAutoBandCache(
   imgW: number,
   imgH: number
 ): Promise<AutoBandCache> {
-  // Health bar bandı (y=745-770, 25px)
-  const bandTop = Math.round(HEALTH_BAR_Y_TOP * (imgH / 1080));
-  const bandHeight = Math.max(1, Math.round((HEALTH_BAR_Y_BOTTOM - HEALTH_BAR_Y_TOP) * (imgH / 1080)));
+  // Tüm slot yüksekliği (y=700-880, 180px) — health bar nerede olursa olsun yakala
+  const bandTop = Math.round(BENCH_Y_TOP * (imgH / 1080));
+  const bandHeight = Math.max(1, Math.round((BENCH_Y_BOTTOM - BENCH_Y_TOP) * (imgH / 1080)));
   const bandLeft = Math.round(480 * (imgW / 1920));
   const bandWidth = Math.max(1, Math.round(996 * (imgW / 1920)));
 

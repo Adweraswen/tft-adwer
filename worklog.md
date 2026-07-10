@@ -5816,3 +5816,25 @@ Stage Summary — Bench yeşil health bar yöntemi TAMAM:
 - TFT-OCR-BOT production kodu ile aynı yöntem (np.all(screenshot == [0,255,18]) + convolve).
 
 Kullanıcıya: Bench'i tekrar test et. Artık health bar yeşilini tarıyor (kafasının üstü), gölge/alt çizgi sorunları çözüldü. Sabit koordinat modunda E2-429-118 dene.
+
+---
+Task ID: bench-healthbar-y-fix-013
+Agent: Z.ai Code (main)
+Task: Kullanıcı: "health barı auto detectde mi bulması lazımdı bomboş veriyor 0 sonuç, sabit koordinatlarda ise durum eskisi gibi hala". Sorun: health bar y konumu TAM BİLİNMİYOR, tek 25px bant (y=745-770) yanlış yerdeydi.
+
+Work Log:
+- 4 candidate y bandı eklendi (HEALTH_BAR_CANDIDATES): top(700-725), upper(735-760), middle(760-785), lower(790-815). Her slot için 4'ü taranır, en yüksek yeşil olanı kullanılır. SlotCache.bestCandidate debug için saklanır.
+- BENCH_Y_TOP 745→700, BENCH_Y_BOTTOM 875→880 (geniş aralık).
+- Auto-detect: sadece 25px bant (745-770) değil, tüm slot yüksekliği (700-880, 180px) taranır. Health bar nerede olursa olsun yakalanır.
+- bench-ocr-sample: 2 hata düzeltildi:
+  1. SVG draw order: body rect health bar'ı kapatıyordu. Portrait önce, health bar sonra çizilir (üzerine).
+  2. Health bar y: top + 8 (708) — Sharp SVG koordinat scale güvenli (absolute y yerine relative).
+  3. SVG'ye viewBox eklendi (koordinat sistemi net).
+- SlotCache: 4 candidate taranır, en iyi greenPixelCount olanı seçilir. 2 tolerance (0 ve 10) yine hesaplanır.
+
+Stage Summary:
+- Sandbox test: exact [0,255,18] = 2784 piksel, y=708-719 (top+8). bestOccupied=4 (doğru!). E2-429-118: 4/9. auto: 3.
+- Artık health bar gerçekte y=708-719'da (top+8). 4 candidate bandı covers: top(700-725) yakaladı.
+- Auto-detect tüm 700-880 aralığını tarıyor, health bar nerede olursa olsun yakalıyor.
+
+Kullanıcıya: Bench'i tekrar test et. Auto-detect artık 0 değil, yeşil health bar'ı tüm slot yüksekliğinde arıyor. Sabit koordinatta E2-429-118 dene. Gerçek TFT'de health bar hangi y'de? Sample'da top+8=708, ama gerçek TFT farklı olabilir — 4 candidate covers y=700-815.
