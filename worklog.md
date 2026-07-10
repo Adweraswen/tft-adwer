@@ -5552,3 +5552,51 @@ Sıradaki adım (PLAN 15.5 revize):
 - src/components/tft/bench-ocr-tester.tsx — UI
 - public/capture-client/local_reader.py — read_bench metodu
 - PLAN.md 15.5 — sıra revize + HP açıklaması düzeltildi
+
+---
+Task ID: shop-ddragon-item-004
+Agent: Z.ai Code (main)
+Task: PLAN 15.5 adım 4-6: Shop OCR (orta) + Data Dragon indirici (orta) + Item tanıma (orta). Kullanıcı "başla kanka, hepsi aynı anda olsun, feedback şart değilse onaylıyorum" dedi. Üçü birden yapıldı.
+
+Work Log:
+- src/lib/tft/ocr/shop-ocr.ts (yeni): Shop OCR motoru. 5 kart paralel OCR (Promise.all), 8 varyant (normal/tall × threshold × scale × psm). Fuzzy matching: Levenshtein (rolling array), score ≥ 0.7 = match, ≥ 0.5 = partial. OCR confusions: | → I, 0 → O. CHAMPIONS roster'a karşı match, apostroesiz variant da dener (Cho'Gath → Chogath). Whitelist: harfler + apostrofe + hyphen + space.
+- src/app/api/shop-ocr-test/route.ts + /api/shop-ocr-sample/route.ts: test API + sentetik 5-kart shop (rastgele şampiyonlar, cost-renkli kart bg, isim white text).
+- src/components/tft/shop-ocr-tester.tsx: UI. 5-kart grid (raw + processed thumbnail, OCR text, best match + score, alt candidates). Varyant seçici, best variant otomatik seçili. purple tema.
+- src/app/api/ddragon-champions/route.ts: Riot CDN'den TFT champion listesi. Set, champion ID'den parse (TFTSet17_X → 17). 1 saat memory cache. ?set=17&force=1 param. Set 17 = 66 şampiyon, version 16.13.1.
+- src/app/api/ddragon-icons/route.ts: Icon proxy + cache (public/tft-icons/). Template matching için ön koşul.
+- src/components/tft/ddragon-status.tsx: Status kartı. Champion listesi (cost-renkli badge'lerle), version, count. "Yenile" butonu cache bypass.
+- src/lib/tft/ocr/item-ocr.ts (yeni): Item tanıma. Renk imzası (HSV: hue/sat/brightness/colorfulness) extraction + fuzzy match ITEM_SIGNATURES tablosuna. Hue circular distance (0-180°). Colorfulness > 0.15 → hue ağırlıklı, değilse brightness ağırlıklı. OCR fallback (hover ismi). 9 component imza (görsel inceleme, approximate — DDragon iconlarından compute edilecek). İsim çakışması fix: ocrText import'u runOcrText olarak alias.
+- src/app/api/item-ocr-test/route.ts + /api/item-ocr-sample/route.ts: test API + sentetik item icon (40×40, category'ye göre şekil: sword/rod/bow/tear/shield/spatula/glove). Header ByteString hatası fix (X-Item-Name kaldırıldı).
+- src/components/tft/item-ocr-tester.tsx: UI. Renk imzası gösterimi (hue/sat/bright/colorful + swatch), icon preview, top-3 color matches, OCR fallback, "Doğru tanındı/Yanlış" truth reveal (sample modunda). rose tema.
+- src/components/tft/ocr-test-section.tsx: roadmap güncellendi — Shop (Adım 4), DDragon (Adım 5), Item (Adım 6) hepsi active. Icon'lar: ShoppingBag, Database, Package.
+- src/app/page.tsx: ShopOcrTester + DDragonStatus + ItemOcrTester OcrTestSection'a eklendi.
+- PLAN.md 15.5: adım 4-6 ✅ işaretlendi, detaylar eklendi (paralel OCR, fuzzy threshold, DDragon set parse, item renk imzası yaklaşımı).
+
+Stage Summary — Shop + DDragon + Item TAMAM:
+- Shop: seed=42 → 5/5 match (Pantheon/Talon/Corki/Graves/Nami, hepsi 100%). Paralel OCR çalışıyor, fuzzy matching Levenshtein ile (rapidfuzz dependency yok).
+- DDragon: Set 17 = 66 şampiyon, version 16.13.1. Set, ID'den parse (TFTSet17_X). Memory cache 1 saat.
+- Item: B.F. Sword → 94% doğru, Tear of Goddess → 95% doğru. Spatula turuncu olduğu için Recurve Bow/Belt ile karışıyor (92%) — template matching (DDragon iconları) bunu çözecek. Renk imzası yaklaşımı temel düzeyde çalışıyor.
+
+Bug'lar bulundu ve düzeltildi:
+- Item API: ocrText import'u yerel değişken ile çakıştı → "ocrText is not a function". Alias ile düzeltildi.
+- Item sample: X-Item-Name header'ında "B.F. Sword" # karakteri nedeniyle ByteString hatası → header kaldırıldı.
+- DDragon: set alanı JSON'da yok, ID içinde TFTSetN var → ID parse ile düzeltildi.
+
+VLM doğrulama: Shop 5-kart grid + match %, Item renk imzası + swatch, DDragon champion listesi, hepsi göründü. Adım 4/5/6 badge'leri doğru.
+
+Mevcut durum:
+- Gold ✅, Round ✅, Bench ✅, Shop ✅, DDragon ✅, Item ✅ (6/8 adım)
+- Board (ZOR) + HP (ZOR) kaldı — en zor ikisi.
+- VLM yedek duruyor, CV pipeline 6 veri tipini okuyor.
+
+Sıradaki adım (PLAN 15.5):
+- Adım 7: Board kalibrasyonu (ZOR) — 4 köşe hex + perspective transform + hex offset.
+- Adım 9: HP 8 oyuncu (ZOR) — sarı halka tespiti + HP sayısı OCR.
+- VEYA: Kullanıcı gerçek TFT screenshot ile 6 tester'ı doğrular.
+
+Önemli dosyalar bu round:
+- src/lib/tft/ocr/shop-ocr.ts — Shop OCR + fuzzy
+- src/lib/tft/ocr/item-ocr.ts — Item renk imzası
+- src/app/api/ddragon-champions/route.ts — DDragon list
+- src/app/api/ddragon-icons/route.ts — DDragon icon cache
+- src/components/tft/shop-ocr-tester.tsx, item-ocr-tester.tsx, ddragon-status.tsx

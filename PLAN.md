@@ -1013,9 +1013,9 @@ TFT-OCR-BOT (github.com/jfd02/TFT-OCR-BOT) kaynak kodundan ÇIKARILDI:
 1. **Gold OCR** (kolay) ✅ — TFT-OCR-BOT koordinatları: (870, 883, 920, 909), PSM7, digits, 3x scale
 2. **Round OCR** (kolay) ✅ — (753, 10, 870, 34), PSM7, "0123456789-"
 3. **Bench** (kolay, İLK CV) ✅ — yeşil [0,255,18] HP bar tespiti, OCR yok. İki mod: sabit 9 koordinat + auto-detect (koordinat bağımsız yeşil kümeleme).
-4. **Shop** (orta) — 5 kart paralel OCR, fuzzy matching (Türkçe client isim sorunu)
-5. **Data Dragon indirici** (orta) — şampiyon ikonları otomatik indir
-6. **Item tanıma** (orta) — Board'dan ÖNCE, çünkü Board şampiyon tanıma item'ları da okumalı
+4. **Shop** (orta) ✅ — 5 kart paralel OCR (Promise.all), fuzzy matching (Levenshtein, score ≥ 0.7 = match). Koordinatlar: (481, 1039, 1476, 1070), 5 × 199px. Whitelist: harfler + apostrofe + hyphen. OCR confusions: | → I, 0 → O.
+5. **Data Dragon indirici** (orta) ✅ — /api/ddragon-champions Set 17 şampiyon listesi (66 champ, v16.13.1). Set, ID'den parse edilir (TFTSet17_X). /api/ddragon-icons ile icon cache. 1 saat memory cache.
+6. **Item tanıma** (orta) ✅ — renk imzası (hue/sat/brightness) + fuzzy match. OCR fallback (hover ismi). Template matching DDragon iconlarından sonra eklenecek. Aynı renk ailesindeki itemlar (Spatula/Recurve/Belt) karışıyor — template matching çözecek.
 7. **Board kalibrasyonu** (ZOR) — 4 köşe hex + perspective transform + hex offset (çift/tek satır kayması)
 8. **Board şampiyon tanıma** (ZOR) — template matching + OCR kombinasyonu
 9. **HP 8 oyuncu** (ZOR) — **sarı halka = oyuncu işareti** (hangisi sensin), kırmızı = diğerleri. HP sayısı ayrı OCR. Sarı halka → o oyuncunun HP'sini oku.
