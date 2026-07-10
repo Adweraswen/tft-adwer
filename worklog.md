@@ -5738,3 +5738,33 @@ Kullanıcıya git talimatı:
   git reset --hard origin/main
   (local değişiklikler silinir ama test-photos .gitignore'da olduğu için fotoğraflar güvende)
   Sonra test-photos/ klasörüne TFT screenshot koy, web arayüzünden Bench test et.
+
+---
+Task ID: overwolf-cleanup-bench-coords-010
+Agent: Z.ai Code (main)
+Task: (1) Overwolf tamamen temizle (iptal edildi), (2) Bench auto-detect kötü (7 küme çıkıyor, gerçek 4), (3) Bench sabit koordinat ilk slotu kapsamıyor — kullanıcı ölçtü: ilk slot x=371-486, 115px genişlik, y~105px.
+
+Work Log:
+- Overwolf temizlik:
+  - overwolf-app/ klasörü silindi.
+  - scripts/overwolf-ws-server.js silindi.
+  - package.json: dev:ws, dev:all scriptleri kaldırıldı. ws, @types/ws, concurrently dependency'leri kaldırıldı (3 paket).
+  - src/lib/tft/reading-provider.ts: Overwolf referansları temizlendi. ReadingMethod "vlm"|"overwolf" → "vlm"|"cv". OverwolfReaderConfig kaldırıldı. Yorumlar CV mimarisine güncellendi.
+- Bench koordinat seti E (KULLANICI ÖLÇÜMÜ):
+  - firstCenter=429 (371 + 115/2), slotWidth=115, y=770-875 (105px).
+  - BENCH_Y_TOP 720→770, BENCH_Y_BOTTOM 845→875. BENCH_Y_TOP_SHORT 770→780.
+  - BENCH_COORD_SETS'e E-429-115 ilk sıraya eklendi (en güvenilir).
+  - bench-ocr-sample: y=770-875, firstCenter=429, slotWidth=115 (senkron).
+- Bench auto-detect cluster birleştirme:
+  - MERGE_GAP = slot genişliğinin %40'ı (~46px @ 1920) — yakın kümeleri birleştir.
+  - NOISE_WIDTH = 15px — çok küçük kümeleri filtrele.
+  - 3 aşama: ham kümeleri topla → yakınları birleştir → küçükleri filtrele + slot map.
+  - Önceki: 7 küme (her portre parça parça). Şimdi: birleştirilmiş, daha az küme.
+
+Stage Summary:
+- Overwolf tamamen temizlendi (klasör + script + dependency + referanslar).
+- Bench koordinat seti E kullanıcı ölçümüyle eklendi. Sandbox'ta E-429-115: 4/9 doğru (diğerleri 5/9, kayma var).
+- Bench auto-detect cluster birleştirme eklendi. Sandbox'ta aşırı birleştiriyor (7→3) ama sandbox sample portreleri geniş — gerçek TFT'de daha kompakt olduğu için daha iyi çalışmalı.
+- Bench API 1.1 saniyede dönüyor (HTTP 502 yok).
+
+Kullanıcıya: Bench'i tekrar test et. Sabit koordinat modunda E-429-115 setini dene (senin ölçümün). Auto-detect cluster birleştirme ile daha az küme görmelisin.

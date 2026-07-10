@@ -3,28 +3,28 @@
  *
  * Mevcut implementasyonlar:
  *   - VLM (vlm-analyzer.ts) — ekran görüntüsü + yapay zeka, yavaş.
- *   - Overwolf GEP (overwolf-app/) — Riot partneri, hızlı + doğru.
+ *   - CV (ocr/ altında: gold-ocr, round-ocr, bench-ocr, shop-ocr, item-ocr)
+ *     — Tesseract + sharp, hızlı, yerel.
  *
  * Neden bu soyutlama:
- *   - VLM ve Overwolf aynı çıktıyı (GameState) üretmeli.
+ *   - VLM ve CV aynı çıktıyı (GameState) üretmeli.
  *   - Üst katman (advisor, sanity filter, UI) hangi yöntemle okunduğunu
  *     bilmemeli — sadece GameState alıp tavsiye üretmeli.
  *
- * Overwolf mimarisi (PLAN.md bölüm 15):
- *   - Kullanıcı PC'de Overwolf client + Overwolf app (HTML/JS) çalışır.
- *   - Overwolf app GEP event'lerini dinler, localhost WebSocket'e yollar.
- *   - Next.js API route WebSocket'i dinler, GameState'e çevirir.
- *   - Frontend /api/snapshot'a POST atar (VLM ile aynı yol).
+ * CV mimarisi (PLAN.md bölüm 15):
+ *   - Kullanıcı PC'de capture.py ekran yakalar (mss), /api/snapshot'a POST.
+ *   - capture.py --use-local: Live API (level) + Tesseract OCR (gold/round/shop).
+ *   - Next.js API route GameState'e çevirir, advisor'a verir.
  */
 
 import type { GameState } from "@/lib/tft/state";
 
 /**
  * Okuma yöntemi türleri.
- * - "vlm": VLM ile ekran görüntüsü analizi (mevcut, yavaş ama esnek).
- * - "overwolf": Overwolf GEP event'leri (hızlı, doğru, Riot partneri).
+ * - "vlm": VLM ile ekran görüntüsü analizi (yavaş ama esnek, yedek).
+ * - "cv": Tesseract OCR + sharp (hızlı, yerel, ana yol).
  */
-export type ReadingMethod = "vlm" | "overwolf";
+export type ReadingMethod = "vlm" | "cv";
 
 /**
  * ReadingProvider ortak interface'i.
@@ -40,7 +40,7 @@ export interface ReadingProvider {
    * Bir okuma döngüsü yap, GameState döndür.
    *
    * VLM: ekran görüntüsü al → VLM'e gönder → parse et → GameState.
-   * Overwolf: GEP event'lerini topla → GameState üret.
+   * CV: ekran görüntüsü al → OCR/CV → GameState.
    *
    * Hata durumunda boş/empty state döner, throw atmaz.
    */
@@ -50,7 +50,7 @@ export interface ReadingProvider {
    * Bağlantı durumu.
    *
    * VLM: API key var mı + son çağrı başarılı mı.
-   * Overwolf: Overwolf client açık mı + GEP event'leri geliyor mu.
+   * CV: Tesseract kurulu mu + son okuma başarılı mı.
    */
   isConnected(): Promise<boolean>;
 
@@ -58,16 +58,6 @@ export interface ReadingProvider {
    * Kaynağı serbest bırak (varsa).
    */
   disconnect(): Promise<void>;
-}
-
-/**
- * Overwolf okuma için gerekli konfigürasyon.
- */
-export interface OverwolfReaderConfig {
-  /** Overwolf app'in WebSocket port'u (localhost). */
-  websocketPort: number;
-  /** TFT GameID (21570 normal, 215701 PBE). */
-  gameId: number;
 }
 
 /**
@@ -94,9 +84,9 @@ export function createReader(method: ReadingMethod): ReadingProvider {
       "VLM provider henüz refactor edilmedi. Mevcut vlm-analyzer.ts'i kullanın."
     );
   }
-  if (method === "overwolf") {
+  if (method === "cv") {
     throw new Error(
-      "Overwolf provider henüz yazılmadı. overwolf-app/ klasörünü kuracağız."
+      "CV provider henüz bu factory'ye bağlı değil. /api/snapshot + capture.py kullanın."
     );
   }
   throw new Error(`Bilinmeyen okuma yöntemi: ${method}`);
