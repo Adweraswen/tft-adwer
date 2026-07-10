@@ -138,6 +138,22 @@ class LocalReader:
         if tesseract_path and TESSERACT_AVAILABLE:
             pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
+    def fetch_raw(self) -> Optional[dict]:
+        """Live API'den ham allgamedata JSON'ını döndür (debug için).
+
+        read_live_api() ile aynı çağrıyı yapar ama parse ETMEZ — raw JSON
+        döner. --raw modunda kullanılır. championStats var mı yok mu, başka
+        hangi HP-like field'lar var görmek için.
+        """
+        try:
+            req = urllib.request.Request(f"{LIVE_API_BASE}/allgamedata")
+            with urllib.request.urlopen(req, timeout=LIVE_API_TIMEOUT, context=_SSL_CTX) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, ConnectionError, OSError, ssl.SSLError):
+            return None
+        except Exception:
+            return None
+
     def read_live_api(self) -> Optional[dict]:
         """Live Client Data API'den veri çek.
 
@@ -755,6 +771,76 @@ class LocalReader:
 # ─── Test (komut satırı) ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys
+
+    # ─── --raw modu: tüm Live API JSON'ını dump et ────────────────────────
+    # HP None çıkıyorsa, championStats var mı yok mu görmek için.
+    # Kullanım: python local_reader.py --raw
+    if "--raw" in sys.argv:
+        print("Live API RAW Dump")
+        print("=" * 60)
+        reader = LocalReader()
+        raw = reader.fetch_raw()
+        if raw is None:
+            print("❌ Live API yok. TFT açık mı? Port 2999 çalışıyor mu?")
+            sys.exit(1)
+
+        # Özet: top-level keys
+        print("\n[Top-level keys]")
+        for k in sorted(raw.keys()):
+            v = raw[k]
+            t = type(v).__name__
+            if isinstance(v, (list, dict)):
+                t = f"{t}[{len(v)}]"
+            print(f"  {k:30s} : {t}")
+
+        # gameData
+        gd = raw.get("gameData", {}) or {}
+        print(f"\n[gameData] (gameMode={gd.get('gameMode')!r}, gameTime={gd.get('gameTime')}s)")
+        for k in sorted(gd.keys()):
+            print(f"  {k:30s} : {gd[k]!r}"[:120])
+
+        # activePlayer — KRİTİK: championStats var mı?
+        ap = raw.get("activePlayer", {}) or {}
+        print(f"\n[activePlayer] keys: {sorted(ap.keys())}")
+        print(f"  level          : {ap.get('level')!r}")
+        print(f"  riotId         : {ap.get('riotId')!r}")
+        print(f"  summonerName   : {ap.get('summonerName')!r}")
+        cs = ap.get("championStats")
+        print(f"  championStats  : {type(cs).__name__ if cs is not None else 'MISSING (None)'}")
+        if isinstance(cs, dict):
+            print(f"    keys         : {sorted(cs.keys())}")
+            print(f"    currentHealth: {cs.get('currentHealth')!r}")
+            print(f"    maxHealth    : {cs.get('maxHealth')!r}")
+        else:
+            print(f"    → championStats yok. TFT-OCR-BOT path çalışmaz.")
+            print(f"    → Sebebi: loading screen / pre-1-1 / Riot bu set'te kaldırdı.")
+
+        # allPlayers — HP hangi field'da?
+        allp = raw.get("allPlayers", []) or []
+        print(f"\n[allPlayers] count={len(allp)}")
+        if allp:
+            p0 = allp[0] or {}
+            print(f"  player[0] keys: {sorted(p0.keys())}")
+            print(f"  player[0].name      : {p0.get('name')!r}")
+            print(f"  player[0].health    : {p0.get('health')!r}")
+            print(f"  player[0].champion  : {p0.get('champion')!r}")
+            print(f"  player[0].level     : {p0.get('level')!r}")
+            print(f"  player[0].gold      : {p0.get('gold')!r}")
+            # Aktif oyuncuyu bul, onun health'i
+            active_id = ap.get("riotId") or ap.get("summonerName")
+            for i, p in enumerate(allp):
+                pid = (p or {}).get("riotId") or (p or {}).get("summonerName") or (p or {}).get("name")
+                if pid == active_id:
+                    print(f"\n  → Sen player[{i}]'sin (riotId match)")
+                    print(f"    health : {(p or {}).get('health')!r}")
+                    break
+
+        print("\n" + "=" * 60)
+        print("Raw dump bitti. championStats yoksa 2-1'de tekrar dene.")
+        sys.exit(0)
+
+    # ─── Normal test modu ─────────────────────────────────────────────────
     print("Local Reader Test")
     print("=" * 50)
 
@@ -765,12 +851,20 @@ if __name__ == "__main__":
     live = reader.read_live_api()
     if live is None:
         print("  ❌ Live API yok. TFT açık mı? Port 2999 çalışıyor mu?")
+        print("  💡 Detay için: python local_reader.py --raw")
     else:
         print(f"  ✅ Connected: {live['connected']}")
         print(f"  Level: {live['level']}")
         print(f"  HP: {live['hp']}")
+        if live.get("hp_source"):
+            print(f"  HP source: {live['hp_source']}")
+        else:
+            print(f"  HP source: (yok — championStats boş mu? --raw ile kontrol et)")
         print(f"  Players: {len(live['all_players'])}")
         print(f"  Game time: {live['game_time']:.1f}s")
+        print()
+        print("  💡 HP None çıkıyorsa: python local_reader.py --raw")
+        print("     (championStats var mı, başka HP field'ı var mı gösterir)")
 
     # Tesseract test
     print("\n[2] Tesseract test...")

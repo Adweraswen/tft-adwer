@@ -6301,3 +6301,27 @@ Stage Summary — VLM tamamen devre dışı bırakılabiliyor:
 - HP/gold/level doğruluğu artık VLM gürültüsü olmadan test edilebilir.
 - shop/board/bench/augments BOŞ kalır (VLM okumadı) — bu mod sadece stats testi için.
 - Dev log'da `SKIP-VLM` satırı görünür — local override log'u (VLM path'teki) görünmez.
+
+---
+Task ID: live-api-raw-dump
+Agent: Z.ai Code (main)
+Task: HP None çıkıyor. championStats var mı yok mu görmek için --raw dump modu ekle. Kullanıcı --raw çalıştırınca tüm Live API JSON'ı özet olarak ekrana basılsın.
+
+Work Log:
+- local_reader.py: LocalReader.fetch_raw() metodu eklendi — ham allgamedata JSON'ını döndürür (parse etmeden).
+- __main__ blokuna --raw modu eklendi:
+  - Top-level keys (type ile)
+  - gameData tüm field'ları (gameMode, gameTime, setID, ...)
+  - activePlayer keys + level/riotId/summonerName
+  - championStats var mı yok mu (MISSING/None) + varsa keys, currentHealth, maxHealth
+  - allPlayers count + player[0] keys + health/champion/level/gold
+  - Aktif oyuncu tespiti (riotId match) + onun health'i
+- Normal test moduna hp_source print'i eklendi + --raw ipucu.
+- Python syntax doğrulandı (py_compile).
+
+Stage Summary — HP None debug tool'ı hazır:
+- `python local_reader.py --raw` → Live API'nin tam iç yapısını gösterir.
+- championStats yoksa: loading screen / pre-1-1 / Riot kaldırdı.
+- championStats var ama currentHealth yoksa: field adı değişmiş.
+- allPlayers[].health varsa: fallback path zaten onu kullanıyor.
+- Kullanıcı 2-1, 3-1, 4-1'de --raw çalıştırıp çıktıyı gönderecek.
