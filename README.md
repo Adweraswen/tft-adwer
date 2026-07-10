@@ -1,75 +1,52 @@
 # TFT Adwer
 
-TFT oynarken ekranı okur, duruma göre comp tavsiyesi verir. İki yol:
-
-1. **VLM yolu** (web preview) — tarayıcıdan ekran paylaşımı + yapay zeka görüntü tanıma. Yavaş (3-8 sn), para var, ama sandbox'ta çalışır.
-2. **Memory yolu** (Tauri app) — League of Legends.exe process'inden direkt memory okur. Hızlı (<1 sn), parasız, %100 doğru. TFTSense/Blitz/MetaTFT seviyesi.
+TFT oynarken ekranı okur, duruma göre comp tavsiyesi verir. Saf CV + OCR (TFTSense'in yolu).
 
 ## Geliştirme
-
-### Web preview (VLM yolu)
 
 ```bash
 bun install
 bun run dev
 ```
 
-### Tauri app (Memory yolu) — Windows + Rust gerekir
+## OCR Pipeline
 
-```bash
-# 1. Bağımlılıkları kur (ilk sefer)
-bun install
-cargo install tauri-cli
+- **Gold/Round/Shop**: Tesseract OCR (PLAN 15.5)
+- **Bench**: std-dev + edge density (gerçek TFT'de doğrulandı) — YOLO model eğitilince onunla değişecek
+- **Board**: (yakında) YOLO + 4-köşe kalibrasyon (TFTSense yöntemi)
 
-# 2. Tauri dev modu — Next.js dev server + Tauri pencere açar
-bun run tauri:dev
-# veya
-cargo tauri dev
-```
+## YOLO Model Eğitimi (TFTSense yöntemi)
 
-Tauri dev modu:
-- Next.js dev server'ı `http://localhost:3000`'da çalıştırır.
-- Tauri penceresi açılır, Next.js'i yükler.
-- Frontend `invoke('read_game_state')` ile Rust backend'i çağırır.
-- Rust, League of Legends.exe process'inden memory okur.
+Bench + şampiyon tanıma için YOLO modeli. Eğitim bir kez yapılır, ONNX dosyası repo'ya konur.
 
-### Build (Tauri app)
+### Adımlar
 
-```bash
-bun run tauri:build
-# veya
-cargo tauri build
-```
+1. **Colab'da notebook aç**: `training/train-yolo.ipynb`'i Google Colab'a yükle (GPU runtime)
+2. **Roboflow API key al**: Ücretsiz hesap → https://universe.roboflow.com → API key
+3. **Notebook'u sırayla çalıştır**: Dataset indir + YOLOv8n eğit + ONNX export
+4. **Çıktıları indir**: `best.onnx` + `labels.txt`
+5. **Repo'ya koy**:
+   - `best.onnx` → `public/models/bench-yolo.onnx`
+   - `labels.txt` → `public/models/bench-yolo-labels.txt`
+6. **git push**: Model hazır, Next.js otomatik kullanır
 
-Build çıktısı: `src-tauri/target/release/` altında installer (.msi, .exe).
+Model geldikten sonra bench otomatik YOLO kullanır (std-dev fallback kalkar).
 
 ## Mimari
 
 ```
-src/                          # Next.js frontend (VLM + UI)
-  lib/tft/
-    vlm-analyzer.ts           # VLM yolu (web preview)
-    memory-reader.ts          # Memory yolu (Tauri) — invoke çağrısı
-    reading-provider.ts       # Ortak interface
-  lib/tft-data/
-    offsets.ts                # Offset referansı (TS tarafı, dokümantasyon)
-    champions.ts, items.ts... # Statik TFT verisi
-src-tauri/                    # Rust backend (Tauri 2)
-  src/
-    main.rs                   # Entry point
-    lib.rs                    # Tauri command'lar (read_game_state, connect_to_game)
-    memory_reader.rs          # MemoryReader — OpenProcess + ReadProcessMemory
-    offsets.rs                # Offset listesi (offsets.ts'in Rust kopyası)
-    types.rs                  # GameState Rust karşılığı
-  Cargo.toml                  # Rust dependencies (windows-sys, tauri, serde)
-  tauri.conf.json             # Tauri ayarları
-public/capture-client/
-  capture.py                  # Python ekran yakalama (VLM yolu için)
+src/lib/tft/ocr/
+  engine.ts          — shared OCR helpers (tesseract, crop, processCrop)
+  gold-ocr.ts        — Gold OCR (Tesseract)
+  round-ocr.ts       — Round OCR (Tesseract)
+  shop-ocr.ts        — Shop OCR (Tesseract + fuzzy match)
+  bench-ocr.ts       — Bench (std-dev + edge, YOLO fallback)
+  yolo-engine.ts     — YOLO ONNX inference (onnxruntime-node)
+  item-ocr.ts        — Item (renk imzası, deneysel)
+training/
+  train-yolo.ipynb   — Colab notebook (YOLOv8n eğitim + ONNX export)
+public/models/
+  bench-test.onnx    — test model (geçici)
+  bench-yolo.onnx    — eğitilmiş model (Colab'dan gelir)
+  bench-yolo-labels.txt — sınıf etiketleri
 ```
-
-## Test
-
-- **VLM yolu:** `bun run dev` → preview link → "Canlı Bağla" → TFT ekranı paylaş.
-- **Memory yolu:** `cargo tauri dev` → Tauri pencere → "Bağlan" → TFT açık olsun.
-
-Daha fazla bilgi: `PLAN.md` (ana plan + hafıza), `worklog.md` (geliştirme günlüğü).

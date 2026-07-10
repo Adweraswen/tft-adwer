@@ -5949,3 +5949,31 @@ Template matching (DDragon iconları) veya VLM ile yapılabilir.
 Şimdilik kuyruk hariç tutma uygulandı, sc35/sc36 bekleniyor.
 
 Kullanıcıya: sc35 ve sc36 yükle, onlarla da test edeyim. Karakter direkt okuma yaklaşımını da düşünüyorum (template matching).
+
+---
+Task ID: yolo-pipeline-setup-018
+Agent: Z.ai Code (main)
+Task: TFTSense yöntemine geçiş — YOLO ML modeli ile bench + şampiyon tanıma. Kullanıcı: "TFTSense ne yapıyorsa onu yapalım, ömürlük olsun, tek tıkla kurulum". Derin araştırma sonrası YOLOv8n + ONNX yolu seçildi.
+
+Work Log — Altyapı kuruldu:
+- onnxruntime-node kuruldu (npm package, native binary otomatik iner).
+- next.config.ts: serverExternalPackages: ["onnxruntime-node"] (native module için).
+- Test ONNX model üretildi (public/models/bench-test.onnx, ReduceMean+MatMul, basit sınıflandırıcı). Node.js'te inference çalışıyor: black→[0,0], white→[1,1].
+- src/lib/tft/ocr/yolo-engine.ts (yeni): ONNX inference engine. isYoloModelAvailable(), runYoloBench(). Model varsa 64×64 resize + normalize + inference + softmax + argmax. Model yoksa fallback.
+- src/lib/tft/ocr/bench-ocr.ts: runBenchOcrSweep'e YOLO fallback eklendi. Model varsa YOLO sonucu bestOccupiedCount'u override eder. Model yoksa std-dev/edge çalışır.
+- training/train-yolo.ipynb (yeni): Colab notebook. Roboflow tft-object dataset indir + YOLOv8n eğit (100 epoch, 640 imgsz) + ONNX export + labels.txt. Çıktı: best.onnx + labels.txt → public/models/.
+- README.md güncellendi: YOLO eğitim talimatı + mimari.
+
+Stage Summary — YOLO altyapısı HAZIR:
+- onnxruntime-node Node.js'te çalışıyor (test ONNX ile doğrulandı).
+- Bench API YOLO fallback ile çalışıyor: model yoksa std-dev (sc33=5 doğru), model varsa YOLO.
+- Colab notebook hazır — kullanıcı kendi API key'i ile çalıştırır.
+- test ONNX model public/models/bench-test.onnx (geçici, gerçek model gelince silinecek).
+
+Sıradaki adımlar:
+1. Kullanıcı Roboflow API key alıp Colab'da notebook çalıştıracak (~30 dk GPU).
+2. Eğitilmiş ONNX model + labels.txt repo'ya konacak.
+3. Model gelince bench otomatik YOLO kullanacak.
+4. Board calibration (4 köşe) + board şampiyon tanıma (aynı YOLO modeli).
+
+Kullanıcıya: Altyapı hazır. Screenshot toplamaya başla (20-30 tane farklı durumda). Colab notebook'u çalıştırıp model eğiteceğiz. Onay verince Colab talimatı vereceğim.

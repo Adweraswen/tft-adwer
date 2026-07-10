@@ -104,6 +104,12 @@ export interface BenchOcrResult {
   bestOccupiedCount: number | null;
   bestVariant: string | null;
   error: string | null;
+  /** YOLO model varsa, sonuç burada (TFTSense yöntemi). */
+  yolo?: {
+    available: boolean;
+    slots: { slot: number; className: string; confidence: number; isEmpty: boolean }[];
+    occupiedCount: number;
+  };
 }
 
 // ─── Slot stats: std-dev + edge density ───────────────────────────────────
@@ -395,5 +401,31 @@ export async function runBenchOcrSweep(fullImage: Buffer): Promise<BenchOcrResul
   }
   const bestVariant = variants.find((v) => v.fixed[0]?.occupiedCount === bestOccupiedCount)?.occupancyVariant ?? variants[0]?.occupancyVariant ?? null;
 
-  return { ok: true, tesseractAvailable, imageWidth: imgW, imageHeight: imgH, variants, bestOccupiedCount, bestVariant, error: null };
+  // YOLO model varsa, onu da çalıştır (TFTSense yöntemi — en doğru).
+  // Model yoksa yolo.available = false, std-dev/edge sonuçları geçerli.
+  let yoloResult: BenchOcrResult["yolo"];
+  try {
+    const { runYoloBench, isYoloModelAvailable } = await import("./yolo-engine");
+    if (isYoloModelAvailable()) {
+      const cs = BENCH_COORD_SETS[0];
+      const centers = benchSlotCenters(cs);
+      const slotRegions = centers.map((cx) => scaleBbox(
+        benchSlotBbox(cx, BENCH_Y_TOP, cs.slotWidth), imgW, imgH
+      ));
+      const yolo = await runYoloBench(pngBuf, slotRegions);
+      yoloResult = {
+        available: true,
+        slots: yolo.slots.map((s) => ({ slot: s.slot, className: s.className, confidence: s.confidence, isEmpty: s.isEmpty })),
+        occupiedCount: yolo.occupiedCount,
+      };
+      // YOLO varsa, onun sonucu en doğru — bestOccupiedCount'u override et.
+      if (yolo.ok) bestOccupiedCount = yolo.occupiedCount;
+    } else {
+      yoloResult = { available: false, slots: [], occupiedCount: 0 };
+    }
+  } catch (e) {
+    yoloResult = { available: false, slots: [], occupiedCount: 0 };
+  }
+
+  return { ok: true, tesseractAvailable, imageWidth: imgW, imageHeight: imgH, variants, bestOccupiedCount, bestVariant, error: null, yolo: yoloResult };
 }
