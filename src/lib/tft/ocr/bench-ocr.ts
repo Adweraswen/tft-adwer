@@ -24,8 +24,13 @@ import {
 } from "./engine";
 
 // ─── Bench slot coordinates (1920x1080 reference) ──────────────────────────
-const BENCH_Y_TOP = 770;
+// REVISED (2026-07-10 user feedback): original y=770-845 (75px) only caught the
+// BOTTOM of the portrait — champions whose shadow didn't extend down were missed.
+// New: y=720-845 (125px) — captures the full portrait including head.
+// We keep the old short bbox as an alternative variant so the user can compare.
+const BENCH_Y_TOP = 720;        // widened: was 770
 const BENCH_Y_BOTTOM = 845;
+const BENCH_Y_TOP_SHORT = 770;  // old short variant (fallback)
 const BENCH_SLOT_WIDTH = 110;
 const BENCH_FIRST_SLOT_CENTER = 535;
 
@@ -33,9 +38,9 @@ function benchSlotCenters(): number[] {
   return Array.from({ length: 9 }, (_, i) => BENCH_FIRST_SLOT_CENTER + i * BENCH_SLOT_WIDTH);
 }
 
-function benchSlotBbox(centerX: number): [number, number, number, number] {
+function benchSlotBbox(centerX: number, yTop: number = BENCH_Y_TOP): [number, number, number, number] {
   const half = Math.floor(BENCH_SLOT_WIDTH / 2);
-  return [centerX - half, BENCH_Y_TOP, centerX + half, BENCH_Y_BOTTOM];
+  return [centerX - half, yTop, centerX + half, BENCH_Y_BOTTOM];
 }
 
 function benchSlotCentersAlt(): number[] {
@@ -74,7 +79,7 @@ export interface BenchSlotResult {
 
 export interface BenchFixedResult {
   variantName: string;
-  coordSet: "primary" | "alt";
+  coordSet: "wide-primary" | "wide-alt" | "short-primary";
   stdThreshold: number;
   brightMinRatio: number;
   slots: BenchSlotResult[];
@@ -98,8 +103,9 @@ export interface BenchAutoResult {
 
 export interface BenchVariantResult {
   occupancyVariant: string;
-  fixedPrimary: BenchFixedResult;
-  fixedAlt: BenchFixedResult;
+  fixedWidePrimary: BenchFixedResult;
+  fixedWideAlt: BenchFixedResult;
+  fixedShortPrimary: BenchFixedResult;
   auto: BenchAutoResult;
   error: string | null;
 }
@@ -167,14 +173,15 @@ async function runFixedMode(
   imgW: number,
   imgH: number,
   centers: number[],
-  coordSet: "primary" | "alt",
+  coordSet: "wide-primary" | "wide-alt" | "short-primary",
   variant: OccupancyVariant
 ): Promise<BenchFixedResult> {
   const slots: BenchSlotResult[] = [];
   const occupiedIndices: number[] = [];
+  const yTop = coordSet === "short-primary" ? BENCH_Y_TOP_SHORT : BENCH_Y_TOP;
 
   for (let i = 0; i < 9; i++) {
-    const bbox1080 = benchSlotBbox(centers[i]);
+    const bbox1080 = benchSlotBbox(centers[i], yTop);
     const region = scaleBbox(bbox1080, imgW, imgH);
     const stats = await computeLumStats(pngBuf, region);
     // Occupied if std-dev high AND enough bright pixels (not just noise).
@@ -319,26 +326,30 @@ export async function runBenchOcrSweep(fullImage: Buffer): Promise<BenchOcrResul
 
   for (const ov of OCCUPANCY_VARIANTS) {
     try {
-      const fixedPrimary = await runFixedMode(pngBuf, imgW, imgH, benchSlotCenters(), "primary", ov);
-      const fixedAlt = await runFixedMode(pngBuf, imgW, imgH, benchSlotCentersAlt(), "alt", ov);
+      const fixedWidePrimary = await runFixedMode(pngBuf, imgW, imgH, benchSlotCenters(), "wide-primary", ov);
+      const fixedWideAlt = await runFixedMode(pngBuf, imgW, imgH, benchSlotCentersAlt(), "wide-alt", ov);
+      const fixedShortPrimary = await runFixedMode(pngBuf, imgW, imgH, benchSlotCenters(), "short-primary", ov);
       const auto = await runAutoMode(pngBuf, imgW, imgH, ov);
 
       variants.push({
         occupancyVariant: ov.name,
-        fixedPrimary,
-        fixedAlt,
+        fixedWidePrimary,
+        fixedWideAlt,
+        fixedShortPrimary,
         auto,
         error: null,
       });
 
-      counts.push(fixedPrimary.occupiedCount);
-      counts.push(fixedAlt.occupiedCount);
+      counts.push(fixedWidePrimary.occupiedCount);
+      counts.push(fixedWideAlt.occupiedCount);
+      counts.push(fixedShortPrimary.occupiedCount);
       counts.push(auto.occupiedCount);
     } catch (e) {
       variants.push({
         occupancyVariant: ov.name,
-        fixedPrimary: { variantName: ov.name, coordSet: "primary", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
-        fixedAlt: { variantName: ov.name, coordSet: "alt", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
+        fixedWidePrimary: { variantName: ov.name, coordSet: "wide-primary", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
+        fixedWideAlt: { variantName: ov.name, coordSet: "wide-alt", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
+        fixedShortPrimary: { variantName: ov.name, coordSet: "short-primary", stdThreshold: 0, brightMinRatio: 0, slots: [], occupiedCount: 0, occupiedIndices: [] },
         auto: { variantName: ov.name, clusters: [], occupiedCount: 0 },
         error: e instanceof Error ? e.message : String(e),
       });

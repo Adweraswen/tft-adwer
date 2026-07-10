@@ -18,7 +18,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Bench geometry — must match bench-ocr.ts constants.
-const BENCH_Y_TOP = 770;
+const BENCH_Y_TOP = 720;
 const BENCH_Y_BOTTOM = 845;
 const BENCH_SLOT_WIDTH = 110;
 const BENCH_FIRST_SLOT_CENTER = 535;

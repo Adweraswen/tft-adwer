@@ -5632,3 +5632,37 @@ Kullanıcıya: gerçek TFT screenshot ile Round + Bench'i tekrar test et. Round'
 - bench-ocr.ts: yeşil → std-dev (tam rewrite)
 - bench-ocr-sample: yeşil HP bar → renkli portre
 - item-ocr-tester: deneysel uyarı
+
+---
+Task ID: lock-feedback-006
+Agent: Z.ai Code (main)
+Task: Kullanıcı test sonuçlarına göre 3 düzeltme: (1) Bench slot bbox en altı görüyor → genişlet, (2) Shop gold sayısı "d"/"a" karışıyor → kart bölgesini daralt + uzun isimler için partial match, (3) Gold/Round/Shop kazanan varyantları local_reader.py'ye kilit.
+
+Work Log:
+- KULLANICI TEST SONUÇLARI (kazananlar):
+  - Gold: paint/180/3x/psm7
+  - Round: bright/120/4x/psm7
+  - Bench: strict/std30-bright10 (fixed primary) — ama slot en altı görüyor
+  - Shop: normal/160/3x/psm7 — ama gold sayısı "d"/"a" oluyor, "Muhteşem Meka" zor
+
+- src/lib/tft/ocr/bench-ocr.ts: BENCH_Y_TOP 770→720 (125px yerine 75px, tüm portre). benchSlotBbox artık yTop parametresi alır. coordSet genişletildi: "wide-primary" (y=720), "wide-alt" (+8px), "short-primary" (y=770, eski fallback). BenchVariantResult: fixedPrimary/fixedAlt → fixedWidePrimary/fixedWideAlt/fixedShortPrimary. runBenchOcrSweep 3 coordSet × 4 variant = 12 sonuç + auto.
+- src/app/api/bench-ocr-sample/route.ts: BENCH_Y_TOP 770→720 (sample ile engine senkron).
+- src/lib/tft/ocr/shop-ocr.ts: kart adı bölgesi daraltıldı — SHOP_TEXT_LEFT_PAD=32 (gold cost number atla), SHOP_TEXT_RIGHT_PAD=10. fuzzyMatchChampion'e 3 yeni partial match stratejisi eklendi:
+  1. OCR contains champion name → 0.7-1.0 score (uzun isim + noise)
+  2. Champion name contains OCR → 0.5-0.9 (substring yakalandı)
+  3. Token overlap → 0.4-0.8 (kelime bazlı, "Muhteşem Meka" gibi)
+  Lowercase normalize eklendi. "Nunu Willump" → "Nunu & Willump" %86 (contains yakaladı).
+- public/capture-client/local_reader.py:
+  - GOLD_LOCKED_VARIANT = paint/180/3x/psm7. GOLD_VARIANTS sıralandı (locked başta). GOLD_CROP_1080P artık PAINT (locked).
+  - ROUND_LOCKED_VARIANT = bright/120/4x/psm7. ROUND_VARIANTS 6-elemanlı (mode dahil), locked başta.
+  - _process_gold_crop'a mode parametresi eklendi ("white" | "bright"). "bright" = max(R,G,B) > thr.
+  - read_round_v2 6-elemanlı tuple unpacking güncellendi.
+
+Stage Summary — 3 düzeltme + kilitler TAMAM:
+- Bench: genişletilmiş bbox (y=720-845) tüm portreyi kapsar. Sandbox'ta 4/4 (wide+short+auto tutarlı). Gerçek TFT'de gölgesi aşağı uzanmayan slot artık yakalanmalı.
+- Shop: daraltılmış kart bölgesi (left pad 32px) gold sayısını dışarıda bırakır. Partial match uzun isimleri yakalıyor ("Nunu Willump" → "Nunu & Willump" %86).
+- Kilitler: local_reader.py'de GOLD_LOCKED_VARIANT + ROUND_LOCKED_VARIANT tanımlı. capture.py --use-local bunları kullanacak (sonraki adım).
+
+Sandbox test: Bench 4→4, Shop 5/5 (Pantheon/Talon/Corki/Graves/Nami %100), Shop seed=7 5/5 (Nunu&Willump %86 partial).
+
+Kullanıcıya: Bench'i tekrar test et — genişletilmiş bbox dolu slotları daha iyi yakalamalı. Shop'ta "d"/"a" karışması azalmalı, uzun isimler partial match ile gelebilir.

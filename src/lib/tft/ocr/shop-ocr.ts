@@ -33,15 +33,19 @@ import { CHAMPIONS } from "@/lib/tft-data";
 
 // ─── Shop card coordinates (1920x1080 reference) ───────────────────────────
 // TFT-OCR-BOT shop text band: (481, 1039, 1476, 1070). 5 cards, each ~199px wide.
-// Card text is centered in each card. We add slight padding.
+// REVISED (2026-07-10 user feedback): gold cost number on the LEFT of each card
+// was leaking into the OCR ("d"/"a" confusion). New: NARROW the card text region
+// — skip the leftmost ~30px (where the gold number sits) and rightmost ~10px.
 export const SHOP_BAND: [number, number, number, number] = [481, 1039, 1476, 1070];
 const SHOP_CARD_WIDTH_1080 = 199; // (1476-481)/5 ≈ 199
+const SHOP_TEXT_LEFT_PAD = 32;   // skip gold cost number on the left
+const SHOP_TEXT_RIGHT_PAD = 10;
 
 function shopCardBboxes(): [number, number, number, number][] {
   const bboxes: [number, number, number, number][] = [];
   for (let i = 0; i < 5; i++) {
-    const x1 = SHOP_BAND[0] + i * SHOP_CARD_WIDTH_1080 + 4;
-    const x2 = SHOP_BAND[0] + (i + 1) * SHOP_CARD_WIDTH_1080 - 4;
+    const x1 = SHOP_BAND[0] + i * SHOP_CARD_WIDTH_1080 + SHOP_TEXT_LEFT_PAD;
+    const x2 = SHOP_BAND[0] + (i + 1) * SHOP_CARD_WIDTH_1080 - SHOP_TEXT_RIGHT_PAD;
     bboxes.push([x1, SHOP_BAND[1], x2, SHOP_BAND[3]]);
   }
   return bboxes;
@@ -53,8 +57,8 @@ const SHOP_BAND_TALL: [number, number, number, number] = [481, 1035, 1476, 1075]
 function shopCardBboxesTall(): [number, number, number, number][] {
   const bboxes: [number, number, number, number][] = [];
   for (let i = 0; i < 5; i++) {
-    const x1 = SHOP_BAND_TALL[0] + i * SHOP_CARD_WIDTH_1080 + 4;
-    const x2 = SHOP_BAND_TALL[0] + (i + 1) * SHOP_CARD_WIDTH_1080 - 4;
+    const x1 = SHOP_BAND_TALL[0] + i * SHOP_CARD_WIDTH_1080 + SHOP_TEXT_LEFT_PAD;
+    const x2 = SHOP_BAND_TALL[0] + (i + 1) * SHOP_CARD_WIDTH_1080 - SHOP_TEXT_RIGHT_PAD;
     bboxes.push([x1, SHOP_BAND_TALL[1], x2, SHOP_BAND_TALL[3]]);
   }
   return bboxes;
@@ -143,17 +147,54 @@ function fuzzyMatchChampion(rawOcr: string): FuzzyMatch[] {
     .trim()
     // Common OCR confusions for champion names.
     .replace(/[|]/g, "I")
-    .replace(/[0]/g, "O");
+    .replace(/[0]/g, "O")
+    .toLowerCase();
 
   const candidates: FuzzyMatch[] = [];
   for (const champ of CHAMPIONS) {
     // Try exact + a few common normalization variants.
-    const variants = [champ.name, champ.name.replace(/['']/g, ""), champ.name.replace(/['']/g, " ")];
+    const variants = [
+      champ.name,
+      champ.name.replace(/['']/g, ""),
+      champ.name.replace(/['']/g, " "),
+    ].map((v) => v.toLowerCase());
+
     let best = 0;
     for (const v of variants) {
       const s = similarity(cleaned, v);
       if (s > best) best = s;
     }
+
+    // CONTAINS / PARTIAL MATCH (user feedback: long names like "Muhteşem Meka" hard to match):
+    // If the OCR text contains the champion name (or vice versa), boost the score.
+    // This helps when OCR captures part of a long name or extra noise around it.
+    for (const v of variants) {
+      if (cleaned.length >= 3 && v.length >= 3) {
+        if (cleaned.includes(v)) {
+          // OCR contains the full champion name → high confidence.
+          const coverage = v.length / cleaned.length;
+          const partialScore = 0.7 + 0.3 * coverage; // 0.7-1.0
+          if (partialScore > best) best = partialScore;
+        } else if (v.includes(cleaned)) {
+          // Champion name contains the OCR text (OCR captured a substring).
+          const coverage = cleaned.length / v.length;
+          const partialScore = 0.5 + 0.4 * coverage; // 0.5-0.9
+          if (partialScore > best) best = partialScore;
+        } else {
+          // Token overlap: how many words of the champion name appear in the OCR?
+          const champTokens = v.split(/[\s-]+/).filter((t) => t.length >= 3);
+          const ocrTokens = new Set(cleaned.split(/[\s-]+/).filter((t) => t.length >= 2));
+          if (champTokens.length > 0) {
+            const matched = champTokens.filter((t) => ocrTokens.has(t)).length;
+            if (matched > 0) {
+              const tokenScore = 0.4 + 0.4 * (matched / champTokens.length);
+              if (tokenScore > best) best = tokenScore;
+            }
+          }
+        }
+      }
+    }
+
     candidates.push({ name: champ.name, cost: Math.round((1 - best) * 100), score: best });
   }
   candidates.sort((a, b) => b.score - a.score);

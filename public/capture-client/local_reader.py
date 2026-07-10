@@ -68,41 +68,50 @@ _SSL_CTX.verify_mode = ssl.CERT_NONE
 # PLAN.md 15.9: TFT-OCR-BOT koordinatları (870, 883, 920, 909) — ana koordinat.
 # Önceki "Paint'ten gelen" koordinat (913, 879, 1033, 910) fallback olarak korunur.
 # read_gold_v2 çoklu varyant dener; hangisinin çalıştığını /api/gold-ocr-test söyler.
+#
+# LOCKED (2026-07-10 kullanıcı testi): paint/180/3x/psm7 kazandı — GOLD_LOCKED_VARIANT.
 GOLD_CROP_1080P_PRIMARY = (870, 883, 920, 909)   # TFT-OCR-BOT (PLAN 15.9)
-GOLD_CROP_1080P_PAINT = (913, 879, 1033, 910)   # kullanıcının Paint ölçümü
-GOLD_CROP_1080P = GOLD_CROP_1080P_PRIMARY       # backward-compatible tek değişken
+GOLD_CROP_1080P_PAINT = (913, 879, 1033, 910)   # kullanıcının Paint ölçümü — KAZANAN
+GOLD_CROP_1080P = GOLD_CROP_1080P_PAINT         # backward-compatible (locked)
+GOLD_LOCKED_VARIANT = ("paint/180/3x/psm7", GOLD_CROP_1080P_PAINT, 180, 3, 7)
 
 # Çoklu varyant — test aracı bunları dener. Her varyant: (isim, bbox, threshold, scale, psm)
 # threshold: beyaz text için R/G/B alt sınırı (0-255). Yüksek = sadece çok beyaz.
 # scale: upscale çarpanı (Tesseract küçük text'i daha iyi okur).
 GOLD_VARIANTS = [
+    ("paint/180/3x/psm7",        GOLD_CROP_1080P_PAINT,   180, 3, 7),  # LOCKED
+    ("paint/160/3x/psm7",        GOLD_CROP_1080P_PAINT,   160, 3, 7),
+    ("paint/200/3x/psm7",        GOLD_CROP_1080P_PAINT,   200, 3, 7),
     ("tft-ocr-bot/180/3x/psm7",  GOLD_CROP_1080P_PRIMARY, 180, 3, 7),
     ("tft-ocr-bot/160/3x/psm7",  GOLD_CROP_1080P_PRIMARY, 160, 3, 7),
     ("tft-ocr-bot/200/3x/psm7",  GOLD_CROP_1080P_PRIMARY, 200, 3, 7),
     ("tft-ocr-bot/180/4x/psm7",  GOLD_CROP_1080P_PRIMARY, 180, 4, 7),
     ("tft-ocr-bot/180/3x/psm8",  GOLD_CROP_1080P_PRIMARY, 180, 3, 8),
-    ("paint/180/3x/psm7",        GOLD_CROP_1080P_PAINT,   180, 3, 7),
-    ("paint/160/3x/psm7",        GOLD_CROP_1080P_PAINT,   160, 3, 7),
-    ("paint/200/3x/psm7",        GOLD_CROP_1080P_PAINT,   200, 3, 7),
 ]
 
 
 # ─── Round OCR koordinatları (1920x1080) ────────────────────────────────────
 # PLAN.md 15.5: TFT-OCR-BOT koordinatları (753, 10, 870, 34) — stage-round göstergesi.
 # TFT'de üst-ortada "3-2" gibi beyaz text görünür. PSM7, "0123456789-" whitelist.
+#
+# LOCKED (2026-07-10 kullanıcı testi): bright/120/4x/psm7 kazandı — ROUND_LOCKED_VARIANT.
+# "bright" modu = max(R,G,B) > threshold (grimsi text için, saf beyaz değil).
 ROUND_CROP_1080P_PRIMARY = (753, 10, 870, 34)   # TFT-OCR-BOT (PLAN 15.5)
 ROUND_CROP_1080P_WIDE = (740, 6, 890, 40)       # fallback (daha geniş)
+ROUND_LOCKED_VARIANT = ("bright/120/4x/psm7", ROUND_CROP_1080P_PRIMARY, 120, 4, 7, "bright")
 
-# Çoklu varyant — /api/round-ocr-test ile senkron.
+# Çoklu varyant — /api/round-ocr-test ile senkron. 6. eleman mode: "white" | "bright"
 ROUND_VARIANTS = [
-    ("tft-ocr-bot/180/3x/psm7",  ROUND_CROP_1080P_PRIMARY, 180, 3, 7),
-    ("tft-ocr-bot/160/3x/psm7",  ROUND_CROP_1080P_PRIMARY, 160, 3, 7),
-    ("tft-ocr-bot/200/3x/psm7",  ROUND_CROP_1080P_PRIMARY, 200, 3, 7),
-    ("tft-ocr-bot/180/4x/psm7",  ROUND_CROP_1080P_PRIMARY, 180, 4, 7),
-    ("tft-ocr-bot/180/3x/psm8",  ROUND_CROP_1080P_PRIMARY, 180, 3, 8),
-    ("wide/180/3x/psm7",         ROUND_CROP_1080P_WIDE,    180, 3, 7),
-    ("wide/160/3x/psm7",         ROUND_CROP_1080P_WIDE,    160, 3, 7),
-    ("wide/200/3x/psm7",         ROUND_CROP_1080P_WIDE,    200, 3, 7),
+    ("bright/120/4x/psm7",       ROUND_CROP_1080P_PRIMARY, 120, 4, 7, "bright"),  # LOCKED
+    ("bright/120/3x/psm7",       ROUND_CROP_1080P_PRIMARY, 120, 3, 7, "bright"),
+    ("bright/100/3x/psm7",       ROUND_CROP_1080P_PRIMARY, 100, 3, 7, "bright"),
+    ("bright/150/3x/psm7",       ROUND_CROP_1080P_PRIMARY, 150, 3, 7, "bright"),
+    ("bright/120/3x/psm8",       ROUND_CROP_1080P_PRIMARY, 120, 3, 8, "bright"),
+    ("white/180/3x/psm7",        ROUND_CROP_1080P_PRIMARY, 180, 3, 7, "white"),
+    ("white/150/3x/psm7",        ROUND_CROP_1080P_PRIMARY, 150, 3, 7, "white"),
+    ("white/130/3x/psm7",        ROUND_CROP_1080P_PRIMARY, 130, 3, 7, "white"),
+    ("wide-bright/120/3x/psm7",  ROUND_CROP_1080P_WIDE,    120, 3, 7, "bright"),
+    ("wide-bright/100/3x/psm7",  ROUND_CROP_1080P_WIDE,    100, 3, 7, "bright"),
 ]
 
 ROUND_WHITELIST = "0123456789-"
@@ -182,13 +191,15 @@ class LocalReader:
         except Exception:
             return None
 
-    def _process_gold_crop(self, gold_crop: "Image.Image", threshold: int, scale: int) -> "Image.Image":
-        """Bir gold crop'ı Tesseract için hazırla: beyaz text → siyah, arka plan → beyaz, upscale.
+    def _process_gold_crop(self, gold_crop: "Image.Image", threshold: int, scale: int, mode: str = "white") -> "Image.Image":
+        """Bir crop'ı Tesseract için hazırla: text → siyah, arka plan → beyaz, upscale.
 
         Args:
             gold_crop: kırpılmış PIL Image (RGB).
-            threshold: beyaz saymak için R/G/B alt sınırı (0-255).
+            threshold: piksel eşiği (0-255).
             scale: upscale çarpanı (Tesseract küçük text için 3-4x önerilir).
+            mode: "white" = R,G,B hepsi > thr (saf beyaz text için, strict).
+                  "bright" = max(R,G,B) > thr (grimsi/off-white text için, hue bağımsız).
 
         Returns:
             İşlenmiş grayscale PIL Image (Tesseract'a verilecek).
@@ -197,10 +208,15 @@ class LocalReader:
         try:
             arr = _np.array(gold_crop)
             r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-            # Beyaz tespiti: R, G, B hepsi threshold'dan büyük
-            is_white = (r > threshold) & (g > threshold) & (b > threshold)
-            # Tesseract "siyah text, beyaz arka plan" ister → beyaz text'i siyah yap.
-            bw = _np.where(is_white, 0, 255).astype(_np.uint8)
+            if mode == "bright":
+                # max(R,G,B) > threshold — parlaklık bazlı, renk bağımsız
+                maxc = _np.maximum(_np.maximum(r, g), b)
+                is_text = maxc > threshold
+            else:
+                # R, G, B hepsi threshold'dan büyük (saf beyaz)
+                is_text = (r > threshold) & (g > threshold) & (b > threshold)
+            # Tesseract "siyah text, beyaz arka plan" ister → text'i siyah yap.
+            bw = _np.where(is_text, 0, 255).astype(_np.uint8)
             from PIL import Image as _PIL
             processed = _PIL.fromarray(bw, mode="L")
         except ImportError:
@@ -348,7 +364,7 @@ class LocalReader:
         best_round_num = None
         best_name = None
 
-        for name, bbox, threshold, scale, psm in ROUND_VARIANTS:
+        for name, bbox, threshold, scale, psm, vmode in ROUND_VARIANTS:
             box = (
                 int(bbox[0] * scale_x),
                 int(bbox[1] * scale_y),
@@ -357,7 +373,7 @@ class LocalReader:
             )
             try:
                 crop = img.crop(box)
-                processed = self._process_gold_crop(crop, threshold, scale)
+                processed = self._process_gold_crop(crop, threshold, scale, mode=vmode)
 
                 if debug:
                     import os
