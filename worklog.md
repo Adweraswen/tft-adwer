@@ -5788,3 +5788,31 @@ Stage Summary:
 - E2-429-118: sandbox'ta 4/9 doğru. Y aralığı 745-830 (portre, gölge değil).
 - Auto-detect: 7 küme → 3 küme (94px width, mantıklı). 169px cluster artık bölünüyor.
 - Kullanıcıya: Sabit koordinat modunda E2-429-118 dene. Y aralığı daraldı, artık alt çizgi değil portre görmeli.
+
+---
+Task ID: bench-green-healthbar-012
+Agent: Z.ai Code (main)
+Task: TFTSense/TFT-OCR-BOT araştırması sonrası Seçenek A uygulandı. Bench std-dev → tam RGB yeşil [0,255,18] + convolve yöntemi. Kullanıcı: "kafalarının da üstünde can barları" — health bar slotun altında değil, şampiyonun KAFASININ ÜSTÜNDE.
+
+Work Log:
+- Y aralığı düzeltme: health bar slotun ÜSTÜNDE (şampiyon kafasının üstü). HEALTH_BAR_Y_TOP=745, HEALTH_BAR_Y_BOTTOM=770 (25px bant). BENCH_Y_TOP=745, BENCH_Y_BOTTOM=875 (tüm slot crop için).
+- Yeni fonksiyonlar:
+  - healthBarBbox: slotun üstündeki health bar sub-region bbox (yeşil tespiti sadece burada).
+  - countHealthBarGreen: tam RGB match [0,255,18] (tolerance ile) + contiguous yeşil şeridi hesabı. TFT-OCR-BOT arena_functions.py bench_occupied_check yöntemi.
+- OCCUPANCY_VARIANTS değişti: std-dev threshold → convolveWindow + minGreenPixels + tolerance. 4 variant: exact/w5-min20, exact/w5-min10, exact/w3-min15, tol10/w5-min15.
+- BenchSlotResult: stdDev/brightRatio/meanLum → greenPixelCount/contiguousGreen.
+- BenchFixedResult: stdThreshold/brightMinRatio → convolveWindow/minGreenPixels/tolerance.
+- computeSlotCache: her slot için health bar sub-region extract + 2 green count (tol=0, tol=10) + slot crop.
+- buildFixedResult: occupied = greenPixelCount >= minGreenPixels AND contiguousGreen >= convolveWindow.
+- Auto-detect: colStd → colGreen (sütun başına yeşil piksel sayısı). Cluster merge + split korundu.
+- bench-ocr-sample: yeşil health bar artık slotun ÜSTÜNDE (top+2, 8px yüksek). Portre altta.
+- bench-ocr-tester UI: σ/std gösterimi → yeşil piksel + cont gösterimi.
+
+Stage Summary — Bench yeşil health bar yöntemi TAMAM:
+- Sandbox test: occupied=4 → E2-429-118 4/9 doğru (slot 1,2,3,5 yeşil 480-592px). occupied=0 → 0. occupied=7 → 7.
+- Gölge artık sorun değil — gölge yeşil [0,255,18] değil, yok sayılıyor.
+- Alt çizgi artık sorun değil — sadece health bar sub-region (y=745-770) taranıyor.
+- 1.4 saniye, HTTP 200 (timeout yok).
+- TFT-OCR-BOT production kodu ile aynı yöntem (np.all(screenshot == [0,255,18]) + convolve).
+
+Kullanıcıya: Bench'i tekrar test et. Artık health bar yeşilini tarıyor (kafasının üstü), gölge/alt çizgi sorunları çözüldü. Sabit koordinat modunda E2-429-118 dene.

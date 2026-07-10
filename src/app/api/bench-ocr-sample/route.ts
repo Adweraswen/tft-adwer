@@ -66,21 +66,33 @@ export async function GET(req: NextRequest) {
     slotEls.push(`<rect x="${left}" y="${top}" width="${width}" height="${height}" rx="3" fill="#0d1525" stroke="#1f2d44" stroke-width="1"/>`);
 
     if (occupiedSet.has(i)) {
-      // Champion "portrait" — MULTIPLE colored shapes (high color variance, unlike empty slots).
-      // This simulates a real champion portrait: head + body + accent colors.
+      // GREEN HEALTH BAR — şampiyon kafasının ÜSTÜNDE (TFT-OCR-BOT [0,255,18]).
+      // Dolu slot = yeşil health bar üstte. Boş slot = yeşil yok.
+      // Health bar: y=745-770 (25px bant), slot genişliğinde %70.
+      const hpBarY = top + 2;
+      const hpBarH = 8;
+      const hpBarW = Math.floor(width * 0.7);
+      const hpBarX = left + Math.floor((width - hpBarW) / 2);
+      // Bar background (dark).
+      slotEls.push(`<rect x="${hpBarX}" y="${hpBarY}" width="${hpBarW}" height="${hpBarH}" rx="1" fill="#0a1018"/>`);
+      // Green fill (TFT-OCR-BOT [0,255,18]). Random 40-100% HP.
+      const hpPct = 0.4 + rand() * 0.6;
+      slotEls.push(`<rect x="${hpBarX}" y="${hpBarY}" width="${Math.floor(hpBarW * hpPct)}" height="${hpBarH}" fill="#00ff12"/>`);
+
+      // Champion "portrait" — body + head (slotun alt kısmı).
       const hue1 = Math.floor(rand() * 360);
       const hue2 = (hue1 + 120 + Math.floor(rand() * 60)) % 360;
       const hue3 = (hue1 + 240 + Math.floor(rand() * 60)) % 360;
       // Body (large rect, main color).
-      slotEls.push(`<rect x="${left + 8}" y="${top + 8}" width="${width - 16}" height="${height - 16}" rx="4" fill="hsl(${hue1}, 55%, 40%)" stroke="hsl(${hue1}, 60%, 55%)" stroke-width="1"/>`);
+      slotEls.push(`<rect x="${left + 8}" y="${top + 20}" width="${width - 16}" height="${height - 28}" rx="4" fill="hsl(${hue1}, 55%, 40%)" stroke="hsl(${hue1}, 60%, 55%)" stroke-width="1"/>`);
       // Head (circle, contrasting color).
-      slotEls.push(`<circle cx="${left + width / 2}" cy="${top + height / 2 - 6}" r="${Math.floor(width * 0.18)}" fill="hsl(${hue2}, 60%, 55%)"/>`);
+      slotEls.push(`<circle cx="${left + width / 2}" cy="${top + height / 2 + 6}" r="${Math.floor(width * 0.18)}" fill="hsl(${hue2}, 60%, 55%)"/>`);
       // Accent (small shape, third color).
-      slotEls.push(`<rect x="${left + width / 2 - 6}" y="${top + height - 18}" width="12" height="4" rx="2" fill="hsl(${hue3}, 70%, 60%)"/>`);
+      slotEls.push(`<rect x="${left + width / 2 - 6}" y="${top + height - 12}" width="12" height="4" rx="2" fill="hsl(${hue3}, 70%, 60%)"/>`);
       // Star indicator (1-3 stars, small yellow dots).
       const stars = 1 + Math.floor(rand() * 3);
       for (let st = 0; st < stars; st++) {
-        slotEls.push(`<circle cx="${left + 12 + st * 8}" cy="${top + height - 22}" r="2" fill="#ffd700"/>`);
+        slotEls.push(`<circle cx="${left + 12 + st * 8}" cy="${top + height - 6}" r="2" fill="#ffd700"/>`);
       }
     }
   }

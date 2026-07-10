@@ -24,18 +24,24 @@ import {
 } from "./engine";
 
 // ─── Bench slot coordinates (1920x1080 reference) ──────────────────────────
-// REVISED (2026-07-10 user feedback v2): koordinatlar yanlıştı — ilk slot atlanıyor,
-// 2. slot 1. sanılıyordu, son slot 2 parçaya bölünüyordu. Birden fazla koordinat
-// seti ekledik (farklı ilk-merkez + genişlik). Kullanıcı hangisinin çalıştığını söyler.
+// YÖNTEM DEĞİŞİKLİĞİ (2026-07-10, TFTSense/TFT-OCR-BOT araştırması sonrası):
+// std-dev → tam RGB yeşil [0,255,18] health bar tespiti.
+// Kullanıcı: "kafalarının da üstünde can barları" — health bar slotun ALTINDA değil,
+// şampiyonun KAFASININ ÜSTÜNDE. Y aralığı artık health bar bölgesi.
 //
-// NOT: auto-detect modu koordinat bağımsız — sabit koordinatlar yanlış olsa bile
-// yeşil/std kümelerini sayar. Gerçek TFT'de auto'yu kullan.
-// Y aralığı: kullanıcı "en alt çizgiyi gösteriyor" dedi — crop çok aşağı uzanıyor,
-// portre değil bench panelinin alt border'ını yakalıyordu. y_bottom 875→830 çek
-// (sadece portre, gölge değil). y_top 770→745 (85px, kompakt portre).
-const BENCH_Y_TOP = 745;          // portre başı
-const BENCH_Y_BOTTOM = 830;       // portre sonu (alt border değil)
-const BENCH_Y_TOP_SHORT = 760;    // kısa variant (sadece portre ortası, 70px)
+// TFT-OCR-BOT production kodu (arena_functions.py, bench_occupied_check):
+//   is_health_color = np.all(screenshot == [0, 255, 18], axis=-1)  # tam RGB match
+//   occupied = any(np.convolve(is_health_color, np.ones(5), mode='valid'))
+// convolve(window=5) → contiguous yeşil piksel şeridi ister (tek-piksel noise eler).
+//
+// Health bar konumu: şampiyon kafasının üstü = slotun ÜST kısmı.
+// Bench slot y aralığı ~745-875 (130px). Health bar üst ~20px'lik bant (y=745-765).
+const BENCH_Y_TOP = 745;          // slot başı (health bar üst kenarı)
+const BENCH_Y_BOTTOM = 875;       // slot sonu
+// Health bar sub-region (şampiyon kafasının üstü) — yeşil tespiti sadece burada.
+const HEALTH_BAR_Y_TOP = 745;     // health bar üst
+const HEALTH_BAR_Y_BOTTOM = 770;  // health bar alt (25px bant)
+const BENCH_Y_TOP_SHORT = 760;    // kısa variant (portre ortası)
 
 // Koordinat seti varyantları: (isim, ilkSlotMerkez, slotGenişlik)
 interface BenchCoordSet {
@@ -46,8 +52,6 @@ interface BenchCoordSet {
 
 const BENCH_COORD_SETS: BenchCoordSet[] = [
   // Set E2: KULLANICI ÖLÇÜMÜ v2 (2026-07-10) — 6-9. slot kayması için width 115→118.
-  // firstCenter=429 (371+58), width=118. 9 slot: 429, 547, 665, 783, 901, 1019, 1137, 1255, 1373.
-  // 6-7. slot +10px, 8-9. slot +20px sağa gelir (linear kayma düzeltme).
   { name: "E2-429-118", firstCenter: 429, slotWidth: 118 },
   // Set E1: orijinal kullanıcı ölçümü (115px)
   { name: "E1-429-115", firstCenter: 429, slotWidth: 115 },
@@ -62,25 +66,38 @@ function benchSlotCenters(coordSet: BenchCoordSet = BENCH_COORD_SETS[0]): number
   return Array.from({ length: 9 }, (_, i) => coordSet.firstCenter + i * coordSet.slotWidth);
 }
 
+// Slot bbox (tüm slot, crop için)
 function benchSlotBbox(centerX: number, yTop: number, slotWidth: number): [number, number, number, number] {
   const half = Math.floor(slotWidth / 2);
   return [centerX - half, yTop, centerX + half, BENCH_Y_BOTTOM];
 }
 
-// ─── Occupancy detection variants ─────────────────────────────────────────
+// Health bar sub-region bbox (yeşil tespiti için, slotun üstü)
+function healthBarBbox(centerX: number, slotWidth: number): [number, number, number, number] {
+  const half = Math.floor(slotWidth / 2);
+  return [centerX - half, HEALTH_BAR_Y_TOP, centerX + half, HEALTH_BAR_Y_BOTTOM];
+}
+
+// ─── Occupancy detection variants (health bar yeşil) ──────────────────────
+// TFT-OCR-BOT yöntemi: tam RGB match [0,255,18] + convolve(window).
+// Variant'lar convolve window + min contiguous yeşil piksel sayısı.
 export interface OccupancyVariant {
   name: string;
-  /** Std-dev threshold (0-100, on luminance 0-255). Slot occupied if std > threshold. */
-  stdThreshold: number;
-  /** Minimum fraction of "bright" pixels (luminance > 60) for occupied. Filters near-black noise. */
-  brightMinRatio: number;
+  /** Convolve window boyutu (contiguous yeşil piksel şeridi uzunluğu). */
+  convolveWindow: number;
+  /** Min yeşil piksel sayısı (occupied sayılması için). */
+  minGreenPixels: number;
+  /** RGB tolerance: 0 = tam match [0,255,18], >0 = ±tolerans. */
+  tolerance: number;
 }
 
 export const OCCUPANCY_VARIANTS: OccupancyVariant[] = [
-  { name: "strict/std30-bright10", stdThreshold: 30, brightMinRatio: 0.10 },
-  { name: "mid/std20-bright05", stdThreshold: 20, brightMinRatio: 0.05 },
-  { name: "loose/std12-bright03", stdThreshold: 12, brightMinRatio: 0.03 },
-  { name: "very-loose/std8-bright02", stdThreshold: 8, brightMinRatio: 0.02 },
+  // Tam RGB match (en spesifik)
+  { name: "exact/w5-min20", convolveWindow: 5, minGreenPixels: 20, tolerance: 0 },
+  { name: "exact/w5-min10", convolveWindow: 5, minGreenPixels: 10, tolerance: 0 },
+  { name: "exact/w3-min15", convolveWindow: 3, minGreenPixels: 15, tolerance: 0 },
+  // Hafif toleranslı (anti-aliasing için)
+  { name: "tol10/w5-min15", convolveWindow: 5, minGreenPixels: 15, tolerance: 10 },
 ];
 
 // ─── Result types ─────────────────────────────────────────────────────────
@@ -88,21 +105,20 @@ export interface BenchSlotResult {
   index: number;
   bbox: [number, number, number, number];
   occupied: boolean;
-  /** Std-dev of luminance (0-255 scale, reported as 0-100). */
-  stdDev: number;
-  /** Fraction of pixels with luminance > 60 (0-1). */
-  brightRatio: number;
-  /** Mean luminance (0-255). */
-  meanLum: number;
+  /** Yeşil piksel sayısı (health bar bölgesi). */
+  greenPixelCount: number;
+  /** Contiguous yeşil piksel şeridi sayısı (convolve sonrası). */
+  contiguousGreen: number;
   cropB64: string;
 }
 
 export interface BenchFixedResult {
   variantName: string;
-  /** Koordinat seti adı (A-535-110, B-515-110, vb.) + y-range (wide/short). */
+  /** Koordinat seti adı (E2-429-118, vb.) + y-range. */
   coordSet: string;
-  stdThreshold: number;
-  brightMinRatio: number;
+  convolveWindow: number;
+  minGreenPixels: number;
+  tolerance: number;
   slots: BenchSlotResult[];
   occupiedCount: number;
   occupiedIndices: number[];
@@ -111,8 +127,8 @@ export interface BenchFixedResult {
 export interface BenchAutoCluster {
   centerX: number;
   width: number;
-  /** Average std-dev in the cluster. */
-  avgStd: number;
+  /** Yeşil piksel sayısı cluster'da. */
+  greenCount: number;
   mappedSlotIndex: number | null;
 }
 
@@ -141,15 +157,20 @@ export interface BenchOcrResult {
   error: string | null;
 }
 
-// ─── Luminance stats ──────────────────────────────────────────────────────
+// ─── Health bar yeşil tespiti (TFT-OCR-BOT yöntemi) ───────────────────────
+// Tam RGB match [0,255,18] (tolerance ile) + convolve(window) contiguous kontrolü.
 
-interface LumStats {
-  std: number; // 0-255
-  brightRatio: number; // 0-1
-  mean: number; // 0-255
+interface GreenStats {
+  greenPixelCount: number;
+  contiguousGreen: number; // en uzun contiguous yeşil şeridi
 }
 
-async function computeLumStats(pngBuf: Buffer, region: { left: number; top: number; width: number; height: number }): Promise<LumStats> {
+async function countHealthBarGreen(
+  pngBuf: Buffer,
+  region: { left: number; top: number; width: number; height: number },
+  tolerance: number,
+  convolveWindow: number
+): Promise<GreenStats> {
   const raw = await sharp(pngBuf)
     .extract({ left: region.left, top: region.top, width: region.width, height: region.height })
     .ensureAlpha()
@@ -157,46 +178,52 @@ async function computeLumStats(pngBuf: Buffer, region: { left: number; top: numb
     .toBuffer();
 
   const channels = 4;
-  const total = raw.length / channels;
-  // Compute luminance per pixel (Rec. 601: 0.299R + 0.587G + 0.114B).
-  const lums = new Float64Array(total);
-  let sum = 0;
-  let brightCount = 0;
-  for (let i = 0, p = 0; i < raw.length; i += channels, p++) {
+  // Health bar yeşil: [0, 255, 18] (TFT-OCR-BOT). Tolerance ile ±.
+  const TARGET_R = 0;
+  const TARGET_G = 255;
+  const TARGET_B = 18;
+
+  let greenCount = 0;
+  // Convolve: her piksel için, kendisi + (window-1) sağ komşusu yeşil mi kontrol et.
+  // Contiguous yeşil şeridi = en uzun run.
+  let maxContiguous = 0;
+  let currentRun = 0;
+  for (let i = 0; i < raw.length; i += channels) {
     const r = raw[i];
     const g = raw[i + 1];
     const b = raw[i + 2];
-    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    lums[p] = lum;
-    sum += lum;
-    if (lum > 60) brightCount++;
+    const isGreen =
+      Math.abs(r - TARGET_R) <= tolerance &&
+      Math.abs(g - TARGET_G) <= tolerance &&
+      Math.abs(b - TARGET_B) <= tolerance;
+    if (isGreen) {
+      greenCount++;
+      currentRun++;
+      if (currentRun > maxContiguous) maxContiguous = currentRun;
+    } else {
+      currentRun = 0;
+    }
   }
-  const mean = sum / total;
-  // Std-dev.
-  let varSum = 0;
-  for (let p = 0; p < total; p++) {
-    const d = lums[p] - mean;
-    varSum += d * d;
-  }
-  const std = Math.sqrt(varSum / total);
+  // contiguousGreen = maxContiguous'in convolve window ile kontrolü.
+  // TFT-OCR-BOT: any(convolve(is_green, ones(window)) == window) → window boyunca tam yeşil.
+  // Bizim basitleştirme: maxContiguous >= window ise occupied.
   return {
-    std,
-    brightRatio: brightCount / total,
-    mean,
+    greenPixelCount: greenCount,
+    contiguousGreen: maxContiguous,
   };
 }
 
 // ─── Fixed-slot mode (optimized) ──────────────────────────────────────────
-// PERFORMANCE: slot stats (lumStats + cropB64) bir kere hesaplanır,
-// 4 occupancy variant aynı stats'ı paylaşır. Önceki: 576 sharp extract,
-// şimdi: 72 extract (8 combo × 9 slot).
+// PERFORMANCE: slot green stats bir kere hesaplanır, 4 variant paylaşır.
+// Her slot için: health bar sub-region extract + green count + crop (görsel için).
 
 interface SlotCache {
   index: number;
   bbox: [number, number, number, number];
-  stdDev: number;
-  brightRatio: number;
-  meanLum: number;
+  greenPixelCount: number;  // tam tolerance=0 match
+  greenPixelCountTol10: number; // tolerance=10 match (anti-aliasing)
+  contiguousGreen: number;  // en uzun contiguous yeşil (tol=0)
+  contiguousGreenTol10: number;
   cropB64: string;
 }
 
@@ -210,16 +237,24 @@ async function computeSlotCache(
   const centers = benchSlotCenters(coordSet);
   const caches: SlotCache[] = [];
   for (let i = 0; i < 9; i++) {
-    const bbox1080 = benchSlotBbox(centers[i], yTop, coordSet.slotWidth);
-    const region = scaleBbox(bbox1080, imgW, imgH);
-    const stats = await computeLumStats(pngBuf, region);
-    const cropPng = await cropRegion(pngBuf, region);
+    // Health bar sub-region (slotun üstü, şampiyon kafasının üstü)
+    const hbBbox1080 = healthBarBbox(centers[i], coordSet.slotWidth);
+    const hbRegion = scaleBbox(hbBbox1080, imgW, imgH);
+    // Tam match (tol=0)
+    const stats0 = await countHealthBarGreen(pngBuf, hbRegion, 0, 5);
+    // Toleranslı match (tol=10, anti-aliasing)
+    const stats10 = await countHealthBarGreen(pngBuf, hbRegion, 10, 5);
+    // Slot crop (görsel için, tüm slot)
+    const slotBbox1080 = benchSlotBbox(centers[i], yTop, coordSet.slotWidth);
+    const slotRegion = scaleBbox(slotBbox1080, imgW, imgH);
+    const cropPng = await cropRegion(pngBuf, slotRegion);
     caches.push({
       index: i,
-      bbox: bbox1080,
-      stdDev: stats.std,
-      brightRatio: stats.brightRatio,
-      meanLum: stats.mean,
+      bbox: slotBbox1080,
+      greenPixelCount: stats0.greenPixelCount,
+      greenPixelCountTol10: stats10.greenPixelCount,
+      contiguousGreen: stats0.contiguousGreen,
+      contiguousGreenTol10: stats10.contiguousGreen,
       cropB64: `data:image/png;base64,${cropPng.toString("base64")}`,
     });
   }
@@ -235,14 +270,17 @@ function buildFixedResult(
   const slots: BenchSlotResult[] = [];
   const occupiedIndices: number[] = [];
   for (const c of cache) {
-    const occupied = c.stdDev >= variant.stdThreshold && c.brightRatio >= variant.brightMinRatio;
+    // Variant'a göre doğru stats seç
+    const greenCount = variant.tolerance === 0 ? c.greenPixelCount : c.greenPixelCountTol10;
+    const contiguous = variant.tolerance === 0 ? c.contiguousGreen : c.contiguousGreenTol10;
+    // Occupied: yeşil piksel sayısı >= minGreenPixels VE contiguous >= window
+    const occupied = greenCount >= variant.minGreenPixels && contiguous >= variant.convolveWindow;
     slots.push({
       index: c.index,
       bbox: c.bbox,
       occupied,
-      stdDev: c.stdDev,
-      brightRatio: c.brightRatio,
-      meanLum: c.meanLum,
+      greenPixelCount: greenCount,
+      contiguousGreen: contiguous,
       cropB64: c.cropB64,
     });
     if (occupied) occupiedIndices.push(c.index);
@@ -250,22 +288,26 @@ function buildFixedResult(
   return {
     variantName: variant.name,
     coordSet: `${coordSet.name}/${yLabel}`,
-    stdThreshold: variant.stdThreshold,
-    brightMinRatio: variant.brightMinRatio,
+    convolveWindow: variant.convolveWindow,
+    minGreenPixels: variant.minGreenPixels,
+    tolerance: variant.tolerance,
     slots,
     occupiedCount: occupiedIndices.length,
     occupiedIndices,
   };
 }
 
-// ─── Auto-detect mode (optimized) ─────────────────────────────────────────
-// PERFORMANCE: band bir kere extract edilir, colStd bir kere hesaplanır,
-// 4 variant aynı colStd'yi paylaşır. Önceki: 4× band extract, şimdi: 1×.
+// ─── Auto-detect mode (yeşil health bar) ──────────────────────────────────
+// Health bar band'ı (y=745-770) tara, yeşil pikselleri x ekseninde kümele.
+// Her küme = 1 dolu slot. std-dev değil, tam RGB yeşil tespiti.
 
 interface AutoBandCache {
   bandLeft: number;
   bandWidth: number;
-  colStd: Float64Array;
+  /** Her sütun için yeşil piksel sayısı (tolerance=0). */
+  colGreen: Float64Array;
+  /** Her sütun için yeşil piksel sayısı (tolerance=10). */
+  colGreenTol10: Float64Array;
 }
 
 async function computeAutoBandCache(
@@ -273,8 +315,9 @@ async function computeAutoBandCache(
   imgW: number,
   imgH: number
 ): Promise<AutoBandCache> {
-  const bandTop = Math.round(770 * (imgH / 1080));
-  const bandHeight = Math.max(1, Math.round(75 * (imgH / 1080)));
+  // Health bar bandı (y=745-770, 25px)
+  const bandTop = Math.round(HEALTH_BAR_Y_TOP * (imgH / 1080));
+  const bandHeight = Math.max(1, Math.round((HEALTH_BAR_Y_BOTTOM - HEALTH_BAR_Y_TOP) * (imgH / 1080)));
   const bandLeft = Math.round(480 * (imgW / 1920));
   const bandWidth = Math.max(1, Math.round(996 * (imgW / 1920)));
 
@@ -285,24 +328,21 @@ async function computeAutoBandCache(
     .toBuffer();
 
   const channels = 4;
-  const colStd = new Float64Array(bandWidth);
+  const colGreen = new Float64Array(bandWidth);
+  const colGreenTol10 = new Float64Array(bandWidth);
+  const TARGET_R = 0, TARGET_G = 255, TARGET_B = 18;
   for (let x = 0; x < bandWidth; x++) {
-    let sum = 0;
+    let g0 = 0, g10 = 0;
     for (let y = 0; y < bandHeight; y++) {
       const i = (y * bandWidth + x) * channels;
-      sum += 0.299 * raw[i] + 0.587 * raw[i + 1] + 0.114 * raw[i + 2];
+      const r = raw[i], g = raw[i + 1], b = raw[i + 2];
+      if (r === TARGET_R && g === TARGET_G && b === TARGET_B) g0++;
+      if (Math.abs(r - TARGET_R) <= 10 && Math.abs(g - TARGET_G) <= 10 && Math.abs(b - TARGET_B) <= 10) g10++;
     }
-    const mean = sum / bandHeight;
-    let varSum = 0;
-    for (let y = 0; y < bandHeight; y++) {
-      const i = (y * bandWidth + x) * channels;
-      const lum = 0.299 * raw[i] + 0.587 * raw[i + 1] + 0.114 * raw[i + 2];
-      const d = lum - mean;
-      varSum += d * d;
-    }
-    colStd[x] = Math.sqrt(varSum / bandHeight);
+    colGreen[x] = g0;
+    colGreenTol10[x] = g10;
   }
-  return { bandLeft, bandWidth, colStd };
+  return { bandLeft, bandWidth, colGreen, colGreenTol10 };
 }
 
 function buildAutoResult(
@@ -310,63 +350,60 @@ function buildAutoResult(
   imgW: number,
   variant: OccupancyVariant
 ): BenchAutoResult {
-  const { bandLeft, bandWidth, colStd } = cache;
+  const { bandLeft, bandWidth, colGreen, colGreenTol10 } = cache;
+  const colData = variant.tolerance === 0 ? colGreen : colGreenTol10;
   const scaleX = imgW / 1920;
   const slotWidthImg = BENCH_COORD_SETS[0].slotWidth * scaleX;
-  // Cluster birleştirme: gap < 20px ise birleştir (çok yakın parçalar).
-  // Önceki 46px çok agresifti — 2 slot tek cluster oluyordu (169px).
   const MERGE_GAP = 20;
-  // Çok küçük kümeleri filtrele (noise).
   const NOISE_WIDTH = 15;
-  // Max cluster width: 1 slot'tan çok büyükse (1.5× = ~177px), muhtemelen 2 slot birleşmiş.
-  // Bu cluster'ı ikiye böl (ortasından).
   const MAX_CLUSTER_WIDTH = Math.floor(slotWidthImg * 1.5);
+  // Min yeşil piksel/sütun threshold (occupied sayılması için)
+  const COL_THRESHOLD = 2; // sütunda en az 2 yeşil piksel
 
   // 1. Ham kümeleri topla
-  const rawClusters: { start: number; end: number; stdSum: number }[] = [];
+  const rawClusters: { start: number; end: number; greenSum: number }[] = [];
   let clusterStart = -1;
-  let clusterStdSum = 0;
+  let clusterGreenSum = 0;
   for (let x = 0; x <= bandWidth; x++) {
-    const hasContent = x < bandWidth && colStd[x] > variant.stdThreshold * 0.7;
+    const hasContent = x < bandWidth && colData[x] >= COL_THRESHOLD;
     if (hasContent && clusterStart === -1) {
       clusterStart = x;
-      clusterStdSum = colStd[x];
+      clusterGreenSum = colData[x];
     } else if (hasContent) {
-      clusterStdSum += colStd[x];
+      clusterGreenSum += colData[x];
     } else if (clusterStart !== -1) {
-      rawClusters.push({ start: clusterStart, end: x, stdSum: clusterStdSum });
+      rawClusters.push({ start: clusterStart, end: x, greenSum: clusterGreenSum });
       clusterStart = -1;
-      clusterStdSum = 0;
+      clusterGreenSum = 0;
     }
   }
 
   // 2. Yakın kümeleri birleştir (gap < MERGE_GAP)
-  const merged: { start: number; end: number; stdSum: number }[] = [];
+  const merged: { start: number; end: number; greenSum: number }[] = [];
   for (const rc of rawClusters) {
     const last = merged[merged.length - 1];
     if (last && rc.start - last.end < MERGE_GAP) {
       last.end = rc.end;
-      last.stdSum += rc.stdSum;
+      last.greenSum += rc.greenSum;
     } else {
       merged.push({ ...rc });
     }
   }
 
-  // 3. Çok büyük kümeleri böl (max 1.5 slot genişliği)
-  const split: { start: number; end: number; stdSum: number }[] = [];
+  // 3. Çok büyük kümeleri böl
+  const split: { start: number; end: number; greenSum: number }[] = [];
   for (const mc of merged) {
     const width = mc.end - mc.start;
     if (width > MAX_CLUSTER_WIDTH) {
-      // Ortasından böl — 2 slot olduğunu varsay
       const mid = Math.floor((mc.start + mc.end) / 2);
-      split.push({ start: mc.start, end: mid, stdSum: mc.stdSum / 2 });
-      split.push({ start: mid, end: mc.end, stdSum: mc.stdSum / 2 });
+      split.push({ start: mc.start, end: mid, greenSum: mc.greenSum / 2 });
+      split.push({ start: mid, end: mc.end, greenSum: mc.greenSum / 2 });
     } else {
       split.push(mc);
     }
   }
 
-  // 4. Çok küçük kümeleri filtrele + slot map
+  // 4. Küçük kümeleri filtrele + slot map
   const centers1080 = benchSlotCenters(BENCH_COORD_SETS[0]);
   const clusters: BenchAutoCluster[] = [];
   for (const mc of split) {
@@ -386,7 +423,7 @@ function buildAutoResult(
     clusters.push({
       centerX: centerXImg,
       width,
-      avgStd: mc.stdSum / width,
+      greenCount: Math.round(mc.greenSum),
       mappedSlotIndex: nearest,
     });
   }
