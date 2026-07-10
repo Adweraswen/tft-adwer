@@ -5838,3 +5838,22 @@ Stage Summary:
 - Auto-detect tüm 700-880 aralığını tarıyor, health bar nerede olursa olsun yakalıyor.
 
 Kullanıcıya: Bench'i tekrar test et. Auto-detect artık 0 değil, yeşil health bar'ı tüm slot yüksekliğinde arıyor. Sabit koordinatta E2-429-118 dene. Gerçek TFT'de health bar hangi y'de? Sample'da top+8=708, ama gerçek TFT farklı olabilir — 4 candidate covers y=700-815.
+
+---
+Task ID: bench-perf-502-fix-014
+Agent: Z.ai Code (main)
+Task: Kullanıcı "http 502 atıyor deneyemiyorum" — Bench API timeout. 4 candidate × 9 slot × 2 tol = 72 extract + short y-range duplicate = çok yavaş.
+
+Work Log:
+- computeSlotCache optimize: tek extract ile tüm slot raw buffer'ı al, 4 candidate y-band'ını raw buffer'dan hesapla (sub-region extract yerine). Önceki: 8 extract/slot, şimdi: 2 extract/slot (raw + png crop).
+- countHealthBarGreen raw buffer'da inline hesaplandı (ayrı fonksiyon çağrısı yok).
+- Short y-range kaldırıldı (BENCH_Y_TOP_SHORT artık kullanılmıyor). Önceki: 6 coordSet × 2 y-range = 12 cache, şimdi: 6 coordSet × 1 = 6 cache.
+- maxDuration 30→60 saniye (güvenlik marjı).
+
+Stage Summary:
+- 581ms (önceki timeout ~30s+ → HTTP 502).
+- bestOccupied=4 (doğru, occupied=4 sample). E2-429-118/full: 4/9.
+- occupied=0 → 0, occupied=7 → 7.
+- HTTP 502 çözüldü.
+
+Kullanıcıya: Bench artık 581ms'de dönüyor, 502 yok. Tekrar dene.

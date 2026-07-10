@@ -239,8 +239,30 @@ async function computeSlotCache(
 ): Promise<SlotCache[]> {
   const centers = benchSlotCenters(coordSet);
   const caches: SlotCache[] = [];
+  // PERFORMANCE: tek extract ile tüm slot raw buffer'ı al, 4 candidate y-band'ını
+  // raw buffer'dan hesapla. Önceki: 4 candidate × 2 tol = 8 extract/slot.
+  // Şimdi: 1 extract/slot (slot full height), candidate'leri raw'dan kes.
   for (let i = 0; i < 9; i++) {
-    // 4 candidate y bandını tara, en yüksek yeşil olanı seç
+    // Slot full bbox (tüm y aralığı, candidate'ler bunun içinde)
+    const slotBbox1080 = benchSlotBbox(centers[i], yTop, coordSet.slotWidth);
+    const slotRegion = scaleBbox(slotBbox1080, imgW, imgH);
+    // Tek extract: tüm slot raw buffer
+    const slotRaw = await sharp(pngBuf)
+      .extract({ left: slotRegion.left, top: slotRegion.top, width: slotRegion.width, height: slotRegion.height })
+      .ensureAlpha()
+      .raw()
+      .toBuffer();
+    const channels = 4;
+    const slotW = slotRegion.width;
+    const slotH = slotRegion.height;
+
+    // Crop PNG (UI için)
+    const cropPng = await sharp(pngBuf)
+      .extract({ left: slotRegion.left, top: slotRegion.top, width: slotRegion.width, height: slotRegion.height })
+      .png()
+      .toBuffer();
+
+    // 4 candidate y-band'ını raw buffer'dan hesapla
     let best = {
       greenPixelCount: 0,
       greenPixelCountTol10: 0,
@@ -249,25 +271,33 @@ async function computeSlotCache(
       bestCandidate: "none",
     };
     for (const cand of HEALTH_BAR_CANDIDATES) {
-      const hbBbox1080 = healthBarBbox(centers[i], coordSet.slotWidth, cand);
-      const hbRegion = scaleBbox(hbBbox1080, imgW, imgH);
-      const stats0 = await countHealthBarGreen(pngBuf, hbRegion, 0, 5);
-      const stats10 = await countHealthBarGreen(pngBuf, hbRegion, 10, 5);
-      // En yüksek yeşil piksel sayısı olan candidate'i seç
-      if (stats0.greenPixelCount > best.greenPixelCount) {
+      // Candidate y-band'ı slot içindeki relative y'ye çevir
+      const scaleY = imgH / 1080;
+      const candTopRel = Math.max(0, Math.floor((cand.yTop - yTop) * scaleY));
+      const candBottomRel = Math.min(slotH, Math.ceil((cand.yBottom - yTop) * scaleY));
+      if (candBottomRel <= candTopRel) continue;
+      // Raw buffer'dan bu y-band'ı tara
+      let g0 = 0, g10 = 0, currentRun0 = 0, maxRun0 = 0, currentRun10 = 0, maxRun10 = 0;
+      for (let y = candTopRel; y < candBottomRel; y++) {
+        for (let x = 0; x < slotW; x++) {
+          const idx = (y * slotW + x) * channels;
+          const r = slotRaw[idx], g = slotRaw[idx + 1], b = slotRaw[idx + 2];
+          const isExact = (r === 0 && g === 255 && b === 18);
+          const isTol10 = (Math.abs(r - 0) <= 10 && Math.abs(g - 255) <= 10 && Math.abs(b - 18) <= 10);
+          if (isExact) { g0++; currentRun0++; if (currentRun0 > maxRun0) maxRun0 = currentRun0; } else currentRun0 = 0;
+          if (isTol10) { g10++; currentRun10++; if (currentRun10 > maxRun10) maxRun10 = currentRun10; } else currentRun10 = 0;
+        }
+      }
+      if (g0 > best.greenPixelCount) {
         best = {
-          greenPixelCount: stats0.greenPixelCount,
-          greenPixelCountTol10: stats10.greenPixelCount,
-          contiguousGreen: stats0.contiguousGreen,
-          contiguousGreenTol10: stats10.contiguousGreen,
+          greenPixelCount: g0,
+          greenPixelCountTol10: g10,
+          contiguousGreen: maxRun0,
+          contiguousGreenTol10: maxRun10,
           bestCandidate: cand.name,
         };
       }
     }
-    // Slot crop (görsel için, tüm slot)
-    const slotBbox1080 = benchSlotBbox(centers[i], yTop, coordSet.slotWidth);
-    const slotRegion = scaleBbox(slotBbox1080, imgW, imgH);
-    const cropPng = await cropRegion(pngBuf, slotRegion);
     caches.push({
       index: i,
       bbox: slotBbox1080,
@@ -479,8 +509,7 @@ export async function runBenchOcrSweep(fullImage: Buffer): Promise<BenchOcrResul
   // 8 combo (4 coordSet × 2 y-range) × 9 slot = 72 sharp extract (önceki: 576).
   const slotCaches: { yLabel: string; coordSet: BenchCoordSet; cache: SlotCache[] }[] = [];
   for (const cs of BENCH_COORD_SETS) {
-    slotCaches.push({ yLabel: "wide", coordSet: cs, cache: await computeSlotCache(pngBuf, imgW, imgH, cs, BENCH_Y_TOP) });
-    slotCaches.push({ yLabel: "short", coordSet: cs, cache: await computeSlotCache(pngBuf, imgW, imgH, cs, BENCH_Y_TOP_SHORT) });
+    slotCaches.push({ yLabel: "full", coordSet: cs, cache: await computeSlotCache(pngBuf, imgW, imgH, cs, BENCH_Y_TOP) });
   }
   // Auto band cache: bir kere extract et, 4 variant paylaş.
   const autoBandCache = await computeAutoBandCache(pngBuf, imgW, imgH);
