@@ -66,3 +66,4 @@ db/*.db-journal
 __pycache__/
 *.pyc
 test-photos/
+tool-results/
