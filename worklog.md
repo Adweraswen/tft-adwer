@@ -6252,3 +6252,23 @@ Stage Summary — HP ÇÖZÜLDÜ (OCR gerekmedi):
 - TFT-OCR-BOT production kodu bunu yıllardır kullanıyor.
 - Kullanıcı testi: capture.py --use-local ile HP doğru gelmeli (1-1'den sonra).
 - Sıradaki: gold/stage OCR + bench YOLO eğitimi (karakter tanıma).
+
+---
+Task ID: hp-test-instructions
+Agent: Z.ai Code (main)
+Task: Kullanıcıya HP Live API test aşamalarını anlat. Dünkü "TFT API HP vermiyor" sonucunun neden yanlış olduğunu açıkla.
+
+Work Log:
+- local_reader.py yeniden incelendi: `activePlayer.championStats.currentHealth` path'i zaten implemente, `allPlayers[].health` fallback ile.
+- snapshot/route.ts: `localData.hp` 0-200 arası filter ile VLM HP'sini eziyor. hp_source field debug için log'a yazılıyor.
+- capture.py --use-local flag'i local_reader'ı başlatıyor, her snapshot'ta `localData` payload'ına hp ekliyor.
+- local_reader.py standalone test modu var: `python local_reader.py` → Live API çağırıp HP'yi yazdırıyor.
+- Dev server çalışıyor, log temiz.
+
+Stage Summary — Kullanıcıya 3 aşamalı test anlatıldı:
+1. `python local_reader.py` (TFT 1-1'de) → HP sayı geliyorsa path çalışıyor
+2. `python capture.py --use-local --background -v` → tam pipeline, dev.log'da "local: hp X→Y (activePlayer.championStats.currentHealth)" görülmeli
+3. Web arayüzünde HP doğrula — hasar alınca düşmeli
+- "Dün HP yoktu" yanılgısının sebebi: probe loading screen'de (gameTime=0s) yapılmış, championStats o an JSON'da yok. TFT-OCR-BOT bunu 1-1'den sonra çağırıyor — bizimki de aynı.
+- Fallback plan (eğer Live API gerçekten çalışmıyorsa): sağ sütun leaderboard + altın border highlight tespiti (OCR).
+- HP'nin "değişken sıralama" sorunu Live API ile tamamen ortadan kalktı — API hangi sırada olursa olsun activePlayer'ın HP'sini veriyor.
