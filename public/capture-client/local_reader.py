@@ -827,13 +827,36 @@ if __name__ == "__main__":
             print(f"  player[0].champion  : {p0.get('champion')!r}")
             print(f"  player[0].level     : {p0.get('level')!r}")
             print(f"  player[0].gold      : {p0.get('gold')!r}")
-            # Aktif oyuncuyu bul, onun health'i
+
+            # ─── TÜM player[0] içeriği (HP adayı field'ları bulmak için) ──
+            # position, scores, items gibi field'lar HP barındırabilir.
+            print(f"\n  [player[0] FULL DUMP]")
+            print(f"  " + json.dumps(p0, indent=2, ensure_ascii=False).replace("\n", "\n  "))
+
+            # ─── TÜM 8 oyuncunun position + level + scores'u ──────────────
+            # Eğer position 1-8 arası farklıysa → leaderboard sırası = senin slot
+            # Bu altın border tespitinden ÇOK daha sağlam.
+            print(f"\n  [tüm oyuncular — position/level/scores]")
             active_id = ap.get("riotId") or ap.get("summonerName")
             for i, p in enumerate(allp):
-                pid = (p or {}).get("riotId") or (p or {}).get("summonerName") or (p or {}).get("name")
+                p = p or {}
+                pid = p.get("riotId") or p.get("summonerName")
+                is_me = " ← SEN" if pid == active_id else ""
+                pos = p.get("position")
+                lvl = p.get("level")
+                scores = p.get("scores")
+                print(f"    [{i}] pos={pos!r:12s} lvl={lvl!r:5s} "
+                      f"riotId={pid!r:25s} scores={scores!r}{is_me}")
+
+            # Aktif oyuncuyu bul, onun health'i (varsa)
+            for i, p in enumerate(allp):
+                p = p or {}
+                pid = p.get("riotId") or p.get("summonerName") or p.get("name")
                 if pid == active_id:
                     print(f"\n  → Sen player[{i}]'sin (riotId match)")
-                    print(f"    health : {(p or {}).get('health')!r}")
+                    print(f"    health   : {p.get('health')!r}")
+                    print(f"    position : {p.get('position')!r}")
+                    print(f"    scores   : {p.get('scores')!r}")
                     break
 
         print("\n" + "=" * 60)
