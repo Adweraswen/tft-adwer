@@ -6325,3 +6325,19 @@ Stage Summary — HP None debug tool'ı hazır:
 - championStats var ama currentHealth yoksa: field adı değişmiş.
 - allPlayers[].health varsa: fallback path zaten onu kullanıyor.
 - Kullanıcı 2-1, 3-1, 4-1'de --raw çalıştırıp çıktıyı gönderecek.
+
+---
+Task ID: github-push-skipvlm-raw
+Agent: Z.ai Code (main)
+Task: Kullanıcı "pull yapmadan nasıl deneyeyim" dedi — ben push'lamamıştım. 3 commit (cron tarafından commit'lenmiş ama push'lanmamış) GitHub'a push edildi.
+
+Work Log:
+- git status: "nothing to commit" — cron task (webDevReview) commit'lemiş.
+- git log origin/main..HEAD: 3 commit push edilmemiş (f98e6f5, 3a07341, d4d8b8e).
+- git push origin main: başarılı (5f01d76..f98e6f5).
+- Doğrulama: origin/main'deki local_reader.py 47 kez "raw/fetch_raw/championStats" içeriyor (--raw modu push edildi).
+- capture.py 14 kez "skip_vlm/skip-vlm" içeriyor (--skip-vlm push edildi).
+
+Stage Summary:
+- GitHub main branch güncel: skip-vlm modu + raw dump modu + HP Live API path.
+- Kullanıcı artık `git pull origin main` ile çekebilir.
